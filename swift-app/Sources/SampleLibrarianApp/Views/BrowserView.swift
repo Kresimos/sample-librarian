@@ -9,6 +9,15 @@ final class BrowserViewModel: ObservableObject {
     @Published var selectedType: String? = nil {
         didSet { reload() }
     }
+    @Published var bpmMinText: String = "" {
+        didSet { reload() }
+    }
+    @Published var bpmMaxText: String = "" {
+        didSet { reload() }
+    }
+    @Published var keyText: String = "" {
+        didSet { reload() }
+    }
     @Published private(set) var samples: [SampleRecord] = []
     @Published private(set) var availableTypes: [String] = []
     @Published var errorMessage: String?
@@ -29,7 +38,13 @@ final class BrowserViewModel: ObservableObject {
     func reload() {
         guard let database else { return }
         do {
-            samples = try database.search(text: searchText.isEmpty ? nil : searchText, sampleType: selectedType)
+            samples = try database.search(
+                text: searchText.isEmpty ? nil : searchText,
+                sampleType: selectedType,
+                bpmMin: Double(bpmMinText.trimmingCharacters(in: .whitespaces)),
+                bpmMax: Double(bpmMaxText.trimmingCharacters(in: .whitespaces)),
+                musicalKey: keyText.trimmingCharacters(in: .whitespaces).isEmpty ? nil : keyText
+            )
             availableTypes = try database.distinctSampleTypes()
             errorMessage = nil
         } catch {
@@ -46,6 +61,9 @@ struct BrowserView: View {
             SearchFilterBar(
                 searchText: $viewModel.searchText,
                 selectedType: $viewModel.selectedType,
+                bpmMinText: $viewModel.bpmMinText,
+                bpmMaxText: $viewModel.bpmMaxText,
+                keyText: $viewModel.keyText,
                 availableTypes: viewModel.availableTypes
             )
 

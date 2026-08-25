@@ -37,8 +37,12 @@ ONE_SHOT_LEANING_MAX_DURATION_SECONDS = 8.0
 
 # Tag names (from taxonomy.yaml's rule names/tags) that lean strongly one way
 # when duration is unknown and no filename keyword settled it.
-_ONE_SHOT_LEANING_TAGS = frozenset({"kick", "snare", "clap", "hihat", "tom", "percussion"})
-_LOOP_LEANING_TAGS = frozenset({"breakbeat"})
+_ONE_SHOT_LEANING_TAGS = frozenset({
+    "kick", "snare", "rimshot", "clap", "hihat", "cymbal", "tom", "percussion",
+    "shaker", "tambourine", "conga", "bongo", "cowbell", "clave", "triangle",
+    "woodblock", "timbale", "djembe", "impact",
+})
+_LOOP_LEANING_TAGS = frozenset({"breakbeat", "drumkit"})
 
 _LOOP_KEYWORD = re.compile(r"\bloops?\b")
 _ONE_SHOT_KEYWORD = re.compile(r"\b(?:one ?shots?|1shots?)\b")

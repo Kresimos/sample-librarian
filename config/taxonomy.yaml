@@ -3,16 +3,22 @@
 # Everything is a tag now, including each rule's own name (e.g. matching the
 # "kick" rule adds a "kick" tag) -- a file can match multiple rules at once
 # (a "Guitar Riff" gets both `guitar` and `melody`), there's no single
-# exclusive "type" anymore. "loop"/"one-shot" are NOT listed as static tags
-# here on purpose -- classify() derives those dynamically per-file (filename
-# keyword > duration > these tags as a fallback hint), and a static tag here
-# would sometimes contradict that (e.g. a "kick" found inside a real
-# "Loops/" folder should tag "loop", not a hardcoded "one-shot").
+# exclusive "type" anymore. Deliberately generous: related categories are
+# split into their own entries (e.g. hihat/cymbal/rimshot are separate, not
+# lumped together) so faceted search has more useful, specific chips to
+# offer, and it's fine/expected for one file to pick up several tags.
+#
+# "loop"/"one-shot" are NOT listed as static tags here on purpose --
+# classify() derives those dynamically per-file (filename keyword > duration
+# > these tags as a fallback hint via classifier.py's leaning-tag sets), and
+# a static tag here would sometimes contradict that.
 #
 # This is a starting point, not exhaustive — expected to be edited as
 # real files reveal naming patterns this misses.
 
 types:
+  # --- Drums / percussion ---------------------------------------------
+
   kick:
     keywords: [kick, bd, bassdrum, "kick drum"]
     tags: [drum]
@@ -21,12 +27,20 @@ types:
     keywords: [snare, sd, rimshot, rim-shot]
     tags: [drum]
 
+  rimshot:
+    keywords: [rimshot, "rim shot", "rim click"]
+    tags: [drum]
+
   clap:
     keywords: [clap, claps]
     tags: [drum]
 
   hihat:
-    keywords: [hihat, "hi-hat", "hi hat", hat, hh, cymbal, ride, crash]
+    keywords: [hihat, "hi-hat", "hi hat", hat, hh]
+    tags: [drum]
+
+  cymbal:
+    keywords: [cymbal, ride, crash, splash]
     tags: [drum]
 
   tom:
@@ -34,16 +48,80 @@ types:
     tags: [drum]
 
   percussion:
-    keywords: [perc, percussion, shaker, tambourine, conga, bongo, cowbell]
+    keywords: [perc, percussion]
+    tags: [drum]
+
+  shaker:
+    keywords: [shaker, shakers]
+    tags: [drum, percussion]
+
+  tambourine:
+    keywords: [tambourine]
+    tags: [drum, percussion]
+
+  conga:
+    keywords: [conga, congas]
+    tags: [drum, percussion]
+
+  bongo:
+    keywords: [bongo, bongos]
+    tags: [drum, percussion]
+
+  cowbell:
+    keywords: [cowbell]
+    tags: [drum, percussion]
+
+  clave:
+    keywords: [clave, claves]
+    tags: [drum, percussion]
+
+  triangle:
+    keywords: [triangle]
+    tags: [drum, percussion]
+
+  woodblock:
+    keywords: [woodblock, "wood block"]
+    tags: [drum, percussion]
+
+  timbale:
+    keywords: [timbale, timbales]
+    tags: [drum, percussion]
+
+  djembe:
+    keywords: [djembe]
+    tags: [drum, percussion]
+
+  drumfill:
+    keywords: [fill, fills, roll, rolls, buildup, "build up"]
     tags: [drum]
 
   breakbeat:
     keywords: [break, breakbeat, "drum loop", drumloop, groove]
     tags: [drum]
 
+  drumkit:
+    keywords: ["full kit", "drum kit", drumkit, "beat loop"]
+    tags: [drum]
+
+  "808":
+    keywords: ["808", "eight-oh-eight"]
+    tags: [bass, drum]
+
+  # --- Bass -------------------------------------------------------------
+
   bass:
-    keywords: [bass, bassline, sub, "808"]
+    keywords: [bass, bassline, "bass line"]
     tags: [bass]
+
+  sub:
+    keywords: [sub, subbass, "sub bass"]
+    tags: [bass]
+
+  reese:
+    keywords: [reese]
+    tags: [bass, synth]
+
+  # --- Melodic / harmonic -------------------------------------------------
 
   guitar:
     # "riff"/"strum" deliberately not shared with melody's keywords below --
@@ -55,13 +133,49 @@ types:
     keywords: [piano, "grand piano", "upright piano", keys]
     tags: [melodic, keys]
 
+  organ:
+    keywords: [organ]
+    tags: [melodic, keys]
+
+  strings:
+    keywords: [strings, violin, cello, viola, orchestra, orchestral]
+    tags: [melodic]
+
+  brass:
+    keywords: [brass, horn, horns, trumpet, sax, saxophone, trombone]
+    tags: [melodic]
+
+  woodwind:
+    keywords: [flute, clarinet, oboe, bassoon, woodwind]
+    tags: [melodic]
+
   synth:
-    keywords: [synth, lead, pluck, arp, arpeggio]
+    keywords: [synth]
+    tags: [melodic, synth]
+
+  lead:
+    keywords: [lead, leads]
+    tags: [melodic, synth]
+
+  pluck:
+    keywords: [pluck, plucks]
+    tags: [melodic, synth]
+
+  arp:
+    keywords: [arp, arps, arpeggio, arpeggiated]
     tags: [melodic, synth]
 
   pad:
-    keywords: [pad, pads, drone, texture, atmosphere]
+    keywords: [pad, pads]
     tags: [melodic, synth, ambient]
+
+  drone:
+    keywords: [drone, drones]
+    tags: [ambient, synth]
+
+  texture:
+    keywords: [texture, textures, atmosphere, atmospheric]
+    tags: [ambient]
 
   chord:
     keywords: [chord, chords, progression]
@@ -71,14 +185,132 @@ types:
     keywords: [melody, melodic, riff, hook, topline]
     tags: [melodic]
 
+  # --- Vocal --------------------------------------------------------------
+
   vocal:
-    keywords: [vocal, vox, acapella, "vocal chop", vocalchop, choir]
+    keywords: [vocal, vox]
     tags: [vocal]
 
+  vocalchop:
+    keywords: ["vocal chop", vocalchop, "vox chop"]
+    tags: [vocal]
+
+  acapella:
+    keywords: [acapella, acappella]
+    tags: [vocal]
+
+  choir:
+    keywords: [choir, choral]
+    tags: [vocal]
+
+  adlib:
+    keywords: [adlib, adlibs, "ad lib", "vocal tag", shout, shouts]
+    tags: [vocal]
+
+  # --- FX / texture ---------------------------------------------------------
+
   fx:
-    keywords: [fx, riser, sweep, impact, downlifter, uplifter, transition, whoosh]
+    keywords: [fx, sfx]
+    tags: [fx]
+
+  riser:
+    keywords: [riser, risers, uplifter]
+    tags: [fx]
+
+  impact:
+    keywords: [impact, impacts, boom, hit]
+    tags: [fx]
+
+  sweep:
+    keywords: [sweep, sweeps, downlifter]
+    tags: [fx]
+
+  transition:
+    keywords: [transition, transitions, whoosh]
     tags: [fx]
 
   ambience:
-    keywords: [ambience, ambient, field, foley]
+    keywords: [ambience, ambient, field, "field recording"]
     tags: [fx, ambient]
+
+  noise:
+    keywords: [noise, static, hiss, crackle, vinyl]
+    tags: [fx]
+
+  glitch:
+    keywords: [glitch, glitches, stutter, error]
+    tags: [fx]
+
+  # --- Genre / style (tags only -- no instrument implied) -----------------
+
+  house:
+    keywords: [house]
+    tags: [genre]
+
+  techno:
+    keywords: [techno]
+    tags: [genre]
+
+  trap:
+    keywords: [trap]
+    tags: [genre]
+
+  dnb:
+    keywords: [dnb, "drum and bass", "drum n bass", jungle]
+    tags: [genre]
+
+  garage:
+    keywords: [garage, "uk garage", ukg]
+    tags: [genre]
+
+  lofi:
+    keywords: [lofi, "lo-fi", "lo fi"]
+    tags: [genre]
+
+  dubstep:
+    keywords: [dubstep]
+    tags: [genre]
+
+  trance:
+    keywords: [trance]
+    tags: [genre]
+
+  disco:
+    keywords: [disco]
+    tags: [genre]
+
+  funk:
+    keywords: [funk, funky]
+    tags: [genre]
+
+  hiphop:
+    keywords: ["hip hop", "hip-hop", hiphop, rap]
+    tags: [genre]
+
+  cinematic:
+    keywords: [cinematic, trailer, epic]
+    tags: [genre]
+
+  rock:
+    keywords: [rock]
+    tags: [genre]
+
+  metal:
+    keywords: [metal]
+    tags: [genre]
+
+  pop:
+    keywords: [pop]
+    tags: [genre]
+
+  reggae:
+    keywords: [reggae]
+    tags: [genre]
+
+  afrobeat:
+    keywords: [afrobeat, afrobeats]
+    tags: [genre]
+
+  latin:
+    keywords: [latin, reggaeton]
+    tags: [genre]

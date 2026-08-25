@@ -18,7 +18,14 @@ Full design/rationale: `~/.claude/plans/yep-that-s-a-good-compressed-papert.md` 
 - **Venv exception**: unlike this user's usual "no venv for single-script projects" convention, this repo uses a real venv because it does destructive filesystem operations on irreplaceable files — pinned, reproducible dependencies matter here.
 - **Venv lives outside the repo**, at `~/.venvs/sample-librarian`, not `./.venv`. Discovered empirically: a venv created inside this iCloud-synced repo got its editable-install `.pth` file silently tagged with macOS's hidden flag, which Python's `site` module skips outright, so the package was uninstallable in place. Same underlying lesson as the data-root/symlink decision — anything that needs to just reliably work stays off iCloud. Run tools via `~/.venvs/sample-librarian/bin/pytest`, `~/.venvs/sample-librarian/bin/samplelib`, etc., or `source ~/.venvs/sample-librarian/bin/activate` first.
 - `brew install ffmpeg` needed (ffprobe, for MP3/M4A/FLAC duration/samplerate).
-- Swift/SwiftUI app lives in `swift-app/`, built after Stage 1 (Python) is solid.
+
+## Stage 2 (swift-app/)
+
+- SwiftUI app, no external SPM dependencies (raw SQLite3 C API, read-only, WAL-aware). Two targets: `SampleLibrarianCore` (DB access, models, search -- pure logic, unit tested) and `SampleLibrarianApp` (the windowed UI + drag-and-drop, imports Core).
+- Build: `cd swift-app && swift build`. Test: `swift test`. Package a launchable `.app`: `./build_app_bundle.sh release`, then move/symlink `.build/SampleLibrarian.app` to `/Applications` and bind a shortcut via System Settings > Keyboard > Keyboard Shortcuts > App Shortcuts.
+- `AppConfig.libraryRoot` defaults to `~/SampleLibrary`; override with `SAMPLELIB_LIBRARY_ROOT=/some/path` for testing against a scratch library.
+- **Drag-and-drop needs hands-on verification.** `SampleRowView` uses SwiftUI's `.onDrag` first (per the project plan). `DragDrop/DraggableFileArea.swift` is a documented, ready-to-swap-in AppKit fallback (`NSDraggingSession`) for if `.onDrag` proves unreliable against Logic Pro specifically -- Logic is an older AppKit/Cocoa app, not a modern drag-and-drop-API-native one, which is exactly the case the plan flagged as a risk. Nobody has dragged a row from a running instance onto a live Logic Pro session yet; that's the first thing to try by hand.
+- Verified so far (2026-08-25): full package builds clean (`swift build`), all 8 `SampleLibrarianCoreTests` pass, and a debug build of the packaged app launches against a scratch library and stays running without crashing. None of that touches actual window rendering or drag behavior -- only a human at the keyboard can confirm the UI looks right and a drag actually lands in Logic.
 
 ## Safety rules for this codebase
 

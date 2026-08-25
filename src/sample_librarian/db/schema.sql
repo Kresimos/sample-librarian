@@ -60,27 +60,12 @@ CREATE TABLE IF NOT EXISTS sample_tags (
     PRIMARY KEY (sample_id, tag_id)
 );
 
-CREATE VIRTUAL TABLE IF NOT EXISTS samples_fts USING fts5(
-    cleaned_filename,
-    sample_type,
-    tags_text,
-    content = 'samples',
-    content_rowid = 'id'
-);
+CREATE INDEX IF NOT EXISTS idx_sample_tags_tag_id ON sample_tags(tag_id);
 
-CREATE TRIGGER IF NOT EXISTS samples_ai AFTER INSERT ON samples BEGIN
-    INSERT INTO samples_fts(rowid, cleaned_filename, sample_type, tags_text)
-    VALUES (new.id, new.cleaned_filename, new.sample_type, '');
-END;
-
-CREATE TRIGGER IF NOT EXISTS samples_ad AFTER DELETE ON samples BEGIN
-    INSERT INTO samples_fts(samples_fts, rowid, cleaned_filename, sample_type, tags_text)
-    VALUES ('delete', old.id, old.cleaned_filename, old.sample_type, '');
-END;
-
-CREATE TRIGGER IF NOT EXISTS samples_au AFTER UPDATE ON samples BEGIN
-    INSERT INTO samples_fts(samples_fts, rowid, cleaned_filename, sample_type, tags_text)
-    VALUES ('delete', old.id, old.cleaned_filename, old.sample_type, '');
-    INSERT INTO samples_fts(rowid, cleaned_filename, sample_type, tags_text)
-    VALUES (new.id, new.cleaned_filename, new.sample_type, '');
-END;
+-- Search (Stage 2) uses plain LIKE/JOIN queries, not FTS5: an external-content
+-- FTS5 table needs its triggers to see the *current* indexed values on every
+-- delete/update (including tag changes, which happen in a separate table the
+-- samples-row triggers can't see), and getting that right without a live
+-- system to verify against is exactly the kind of subtle bug not worth
+-- risking here. Library sizes here are realistically thousands of rows, not
+-- millions, so indexed LIKE queries are plenty fast.

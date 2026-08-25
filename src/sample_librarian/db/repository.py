@@ -185,6 +185,48 @@ def _replace_tags(conn: sqlite3.Connection, sample_id: int, tags: tuple[str, ...
     conn.commit()
 
 
+def search_samples(
+    conn: sqlite3.Connection,
+    *,
+    text: str | None = None,
+    sample_type: str | None = None,
+    bpm_min: float | None = None,
+    bpm_max: float | None = None,
+    musical_key: str | None = None,
+) -> list[sqlite3.Row]:
+    """Plain LIKE/JOIN search -- see schema.sql for why this isn't FTS5."""
+    clauses = ["s.status = 'active'"]
+    params: list = []
+
+    if text:
+        clauses.append(
+            "(s.cleaned_filename LIKE ? OR s.sample_type LIKE ? OR EXISTS ("
+            "SELECT 1 FROM sample_tags st JOIN tags t ON t.id = st.tag_id "
+            "WHERE st.sample_id = s.id AND t.name LIKE ?))"
+        )
+        like = f"%{text}%"
+        params.extend([like, like, like])
+    if sample_type:
+        clauses.append("s.sample_type = ?")
+        params.append(sample_type)
+    if bpm_min is not None:
+        clauses.append("s.bpm >= ?")
+        params.append(bpm_min)
+    if bpm_max is not None:
+        clauses.append("s.bpm <= ?")
+        params.append(bpm_max)
+    if musical_key:
+        clauses.append("s.musical_key = ?")
+        params.append(musical_key)
+
+    query = (
+        "SELECT DISTINCT s.* FROM samples s WHERE "
+        + " AND ".join(clauses)
+        + " ORDER BY s.cleaned_filename"
+    )
+    return conn.execute(query, params).fetchall()
+
+
 def count_samples(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COUNT(*) AS n FROM samples").fetchone()["n"]
 

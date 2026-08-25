@@ -142,7 +142,7 @@ def run_apply_sweep(
                 bucket=action.bucket,
                 source_path=str(action.source_path),
                 is_symlink_at_current=(action.bucket == "vendor"),
-                stub_left_at_source=(action.bucket == "orphan"),
+                stub_left_at_source=(action.bucket == "orphan" and leave_stub_on_move),
                 vendor_name=action.vendor_name,
                 original_filename=path.name,
                 cleaned_filename=action.cleaned_filename,

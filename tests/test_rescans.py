@@ -42,6 +42,23 @@ def test_inbox_rescan_moves_inbox_contents_into_unsorted_and_empties_inbox(tmp_p
     assert run_row["run_type"] == "inbox_rescan"
 
 
+def test_inbox_rescan_records_stub_left_at_source_as_false(tmp_path: Path):
+    """inbox_rescan never leaves a stub symlink behind (see mover.py) --
+    the samples table must reflect that accurately, not just hardcode True
+    for every orphan-bucket row regardless of which pipeline moved it.
+    """
+    settings = _make_settings(tmp_path)
+    settings.inbox_dir.mkdir(parents=True)
+    write_minimal_wav(settings.inbox_dir / "New_Find.wav")
+    taxonomy_rules = load_taxonomy(TAXONOMY_PATH)
+
+    with repository.open_db(settings.db_path) as conn:
+        run_inbox_rescan(settings, taxonomy_rules, conn)
+        row = conn.execute("SELECT stub_left_at_source FROM samples").fetchone()
+
+    assert row["stub_left_at_source"] == 0
+
+
 def test_inbox_rescan_respects_existing_unsorted_contents_for_collisions(tmp_path: Path):
     settings = _make_settings(tmp_path)
     settings.inbox_dir.mkdir(parents=True)

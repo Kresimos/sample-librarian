@@ -20,8 +20,8 @@ from sample_librarian.config import Settings
 from sample_librarian.naming.cleaner import clean_filename, make_unique
 from sample_librarian.db.repository import now_iso
 from sample_librarian.organize.manifest import ManifestEntry, ManifestWriter
-from sample_librarian.organize.mover import MoveError, move_orphan_file
-from sample_librarian.organize.symlinker import SymlinkError, symlink_vendor_file
+from sample_librarian.organize.mover import move_orphan_file
+from sample_librarian.organize.symlinker import symlink_vendor_file
 from sample_librarian.scanner.bucket_classifier import classify_bucket
 
 _NO_WRITE_BACK_EXTENSIONS = {".aif", ".aiff"}  # no AIFF chunk writer yet, see project plan
@@ -112,9 +112,10 @@ def execute_action(
     manifest as it happens. leave_stub_on_move=False is used by inbox_rescan,
     see move_orphan_file for why.
     """
-    try:
-        if action.bucket == "vendor":
+    if action.bucket == "vendor":
+        try:
             symlink_vendor_file(action.source_path, action.target_path)
+        except Exception as exc:  # noqa: BLE001 -- always record failures
             manifest.record(
                 ManifestEntry(
                     action="symlink",
@@ -122,15 +123,15 @@ def execute_action(
                     dest=str(action.target_path),
                     sample_source_path=str(action.source_path),
                     timestamp=now_iso(),
-                    success=True,
+                    success=False,
+                    error=str(exc),
                 )
             )
-            return ExecutionOutcome(success=True, error=None, wrote_tempo_metadata=False)
+            return ExecutionOutcome(success=False, error=str(exc), wrote_tempo_metadata=False)
 
-        move_orphan_file(action.source_path, action.target_path, leave_stub=leave_stub_on_move)
         manifest.record(
             ManifestEntry(
-                action="move",
+                action="symlink",
                 source=str(action.source_path),
                 dest=str(action.target_path),
                 sample_source_path=str(action.source_path),
@@ -138,9 +139,44 @@ def execute_action(
                 success=True,
             )
         )
+        return ExecutionOutcome(success=True, error=None, wrote_tempo_metadata=False)
 
-        wrote_tempo = False
-        if action.would_write_tempo_metadata:
+    try:
+        move_orphan_file(action.source_path, action.target_path, leave_stub=leave_stub_on_move)
+    except Exception as exc:  # noqa: BLE001 -- always record failures
+        manifest.record(
+            ManifestEntry(
+                action="move",
+                source=str(action.source_path),
+                dest=str(action.target_path),
+                sample_source_path=str(action.source_path),
+                timestamp=now_iso(),
+                success=False,
+                error=str(exc),
+            )
+        )
+        return ExecutionOutcome(success=False, error=str(exc), wrote_tempo_metadata=False)
+
+    manifest.record(
+        ManifestEntry(
+            action="move",
+            source=str(action.source_path),
+            dest=str(action.target_path),
+            sample_source_path=str(action.source_path),
+            timestamp=now_iso(),
+            success=True,
+        )
+    )
+
+    # The move already fully succeeded at this point -- the file is safely in
+    # the library. A failure writing tempo metadata back is a lesser problem
+    # (a bonus feature didn't apply) and must NOT be reported as a failed
+    # move, or the file would end up correctly organized on disk but missing
+    # from the database entirely.
+    wrote_tempo = False
+    tempo_error: str | None = None
+    if action.would_write_tempo_metadata:
+        try:
             previous_state = _read_previous_tempo_state(action.target_path)
             _write_tempo_metadata(action.target_path, action.bpm)
             wrote_tempo = True
@@ -155,22 +191,21 @@ def execute_action(
                     previous_state=previous_state,
                 )
             )
-
-        return ExecutionOutcome(success=True, error=None, wrote_tempo_metadata=wrote_tempo)
-
-    except (MoveError, SymlinkError, Exception) as exc:  # noqa: BLE001 -- always record failures
-        manifest.record(
-            ManifestEntry(
-                action="symlink" if action.bucket == "vendor" else "move",
-                source=str(action.source_path),
-                dest=str(action.target_path),
-                sample_source_path=str(action.source_path),
-                timestamp=now_iso(),
-                success=False,
-                error=str(exc),
+        except Exception as exc:  # noqa: BLE001 -- always record failures
+            tempo_error = str(exc)
+            manifest.record(
+                ManifestEntry(
+                    action="write_tempo_metadata",
+                    source=str(action.target_path),
+                    dest=str(action.target_path),
+                    sample_source_path=str(action.source_path),
+                    timestamp=now_iso(),
+                    success=False,
+                    error=tempo_error,
+                )
             )
-        )
-        return ExecutionOutcome(success=False, error=str(exc), wrote_tempo_metadata=False)
+
+    return ExecutionOutcome(success=True, error=tempo_error, wrote_tempo_metadata=wrote_tempo)
 
 
 def _read_previous_tempo_state(target_path: Path) -> dict:

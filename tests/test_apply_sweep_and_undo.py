@@ -67,6 +67,17 @@ def test_apply_sweep_moves_orphan_and_symlinks_vendor(tmp_path: Path):
         assert riff_chunks.read_acid(vendor_chunks) is None  # never written to
 
         assert repository.count_samples(conn) == 2
+
+        orphan_row = conn.execute(
+            "SELECT stub_left_at_source, is_symlink_at_current FROM samples WHERE bucket = 'orphan'"
+        ).fetchone()
+        assert orphan_row["stub_left_at_source"] == 1
+        assert orphan_row["is_symlink_at_current"] == 0
+        vendor_row = conn.execute(
+            "SELECT stub_left_at_source, is_symlink_at_current FROM samples WHERE bucket = 'vendor'"
+        ).fetchone()
+        assert vendor_row["stub_left_at_source"] == 0
+        assert vendor_row["is_symlink_at_current"] == 1
         by_bucket = repository.count_by_bucket(conn)
         assert by_bucket == {"vendor": 1, "orphan": 1}
 

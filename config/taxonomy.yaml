@@ -39,6 +39,12 @@ types:
     keywords: [bass, bassline, sub, "808"]
     tags: [bass]
 
+  guitar:
+    # "riff"/"strum" deliberately not shared with melody's keywords below --
+    # melody's "riff" should stay generic (a synth riff isn't a guitar).
+    keywords: [guitar, gtr, "electric guitar", "acoustic guitar", "guitar riff", strum, strumming]
+    tags: [melodic]
+
   piano:
     keywords: [piano, "grand piano", "upright piano", keys]
     tags: [melodic, keys]

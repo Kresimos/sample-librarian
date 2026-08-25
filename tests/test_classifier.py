@@ -121,6 +121,17 @@ def test_loop_type_non_drum_type_keeps_short_threshold(rules):
     assert result.loop_type == "loop"
 
 
+def test_guitar_by_filename(rules):
+    result = classify("Cymatics Vibrations Metal Guitar Loop 12 174 BPM D Maj.wav", [], rules)
+    assert result.sample_type == "guitar"
+
+
+def test_guitar_riff_does_not_leak_into_generic_melody_riff(rules):
+    # "riff" alone (no "guitar") should still match melody, not guitar.
+    result = classify("Cool_Riff_01.wav", [], rules)
+    assert result.sample_type == "melody"
+
+
 def test_app_foley_tag_added_for_file_inside_app_bundle(rules):
     result = classify(
         "taskCompleted.mp3",

@@ -1,0 +1,72 @@
+# Keyword -> sample_type mapping used by classify/classifier.py.
+# Matched against tokenized filename + parent folder names, case-insensitive.
+# First matching type wins (order matters); "tags" are additional free tags
+# attached alongside sample_type, not mutually exclusive with other types.
+#
+# This is a starting point, not exhaustive — expected to be edited as
+# real files reveal naming patterns this misses.
+
+types:
+  kick:
+    keywords: [kick, bd, bassdrum, "kick drum"]
+    tags: [drum, one-shot]
+
+  snare:
+    keywords: [snare, sd, rimshot, rim-shot]
+    tags: [drum, one-shot]
+
+  clap:
+    keywords: [clap, claps]
+    tags: [drum, one-shot]
+
+  hihat:
+    keywords: [hihat, "hi-hat", "hi hat", hat, hh, cymbal, ride, crash]
+    tags: [drum, one-shot]
+
+  tom:
+    keywords: [tom, toms]
+    tags: [drum, one-shot]
+
+  percussion:
+    keywords: [perc, percussion, shaker, tambourine, conga, bongo, cowbell]
+    tags: [drum, one-shot]
+
+  breakbeat:
+    keywords: [break, breakbeat, "drum loop", drumloop, groove]
+    tags: [drum, loop]
+
+  bass:
+    keywords: [bass, bassline, sub, "808"]
+    tags: [bass]
+
+  piano:
+    keywords: [piano, "grand piano", "upright piano", keys]
+    tags: [melodic, keys]
+
+  synth:
+    keywords: [synth, lead, pluck, arp, arpeggio]
+    tags: [melodic, synth]
+
+  pad:
+    keywords: [pad, pads, drone, texture, atmosphere]
+    tags: [melodic, synth, ambient]
+
+  chord:
+    keywords: [chord, chords, progression]
+    tags: [melodic]
+
+  melody:
+    keywords: [melody, melodic, riff, hook, topline]
+    tags: [melodic]
+
+  vocal:
+    keywords: [vocal, vox, acapella, "vocal chop", vocalchop, choir]
+    tags: [vocal]
+
+  fx:
+    keywords: [fx, riser, sweep, impact, downlifter, uplifter, transition, whoosh]
+    tags: [fx]
+
+  ambience:
+    keywords: [ambience, ambient, field, foley]
+    tags: [fx, ambient]

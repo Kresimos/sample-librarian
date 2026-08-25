@@ -1,0 +1,21 @@
+.venv/
+# the real venv lives outside the repo, see CLAUDE.md -- this just covers
+# anyone who creates one in-place on a non-iCloud checkout
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+logs/
+
+config/settings.toml
+
+.DS_Store
+
+swift-app/.build/
+swift-app/.swiftpm/
+swift-app/*.xcodeproj/xcuserdata/

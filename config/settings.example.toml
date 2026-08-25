@@ -1,0 +1,26 @@
+# Copy to settings.toml (gitignored) and edit for your machine.
+
+# Root of the actual library data: real files, database, symlink targets.
+# Must be on local disk. Must NOT resolve under ~/Library/Mobile Documents (iCloud).
+library_root = "~/SampleLibrary"
+
+# Folders to walk during a full sweep. Add/remove as needed.
+scan_roots = [
+    "~/Downloads",
+    "~/Music",
+    "~/Desktop",
+]
+
+# Audio extensions in scope for v1.
+audio_extensions = [".wav", ".aif", ".aiff", ".mp3", ".m4a", ".flac"]
+
+# Any file whose path starts with one of these is bucket="vendor": left physically
+# untouched, only symlinked into the library. Never moved, never renamed, never
+# written back to. Fill this in with your actual installed sample libraries before
+# the first real sweep, deliberately conservative — safe to over-list, unsafe to
+# under-list.
+vendor_roots = [
+    # "~/Music/Splice",
+    # "/Library/Application Support/Native Instruments",
+    # "~/Music/Spitfire Audio",
+]

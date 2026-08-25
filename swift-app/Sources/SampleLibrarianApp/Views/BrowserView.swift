@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import SampleLibrarianCore
 
@@ -125,7 +126,24 @@ struct BrowserView: View {
         }
         .frame(minWidth: 560, minHeight: 380)
         .background(Color(nsColor: .textBackgroundColor))
+        // The database is written by an entirely separate process (the
+        // samplelib CLI, possibly run from a Terminal while this app was
+        // already open) -- there's no push notification for "new data
+        // showed up", so refresh whenever the window regains focus. A
+        // manual button covers the case where the app was already frontmost
+        // the whole time a scan ran elsewhere, so focus never changed.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            viewModel.reload()
+        }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    viewModel.reload()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .help("Reload from the database (e.g. after running samplelib scan elsewhere)")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     viewModel.rescanInbox()
@@ -133,7 +151,7 @@ struct BrowserView: View {
                     if viewModel.isRescanning {
                         ProgressView().controlSize(.small)
                     } else {
-                        Label("Rescan Inbox", systemImage: "arrow.clockwise")
+                        Label("Rescan Inbox", systemImage: "tray.and.arrow.down")
                     }
                 }
                 .disabled(viewModel.isRescanning)

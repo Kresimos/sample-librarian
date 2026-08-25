@@ -121,6 +121,34 @@ def test_loop_type_non_drum_type_keeps_short_threshold(rules):
     assert result.loop_type == "loop"
 
 
+def test_app_foley_tag_added_for_file_inside_app_bundle(rules):
+    result = classify(
+        "taskCompleted.mp3",
+        ["media", "browser", "accessibilitySignal", "platform", "vs", "out", "app", "Resources",
+         "Contents", "Visual Studio Code.app"],
+        rules,
+    )
+    assert "app-foley" in result.tags
+
+
+def test_app_foley_tag_absent_outside_app_bundle(rules):
+    result = classify("Heavy_Kick.wav", ["Some Sample Pack"], rules)
+    assert "app-foley" not in result.tags
+
+
+def test_app_foley_tag_stacks_with_normal_classification(rules):
+    result = classify("kick.wav", ["Sounds", "SomeApp.app"], rules)
+    assert result.sample_type == "kick"
+    assert "app-foley" in result.tags
+    assert "drum" in result.tags  # normal taxonomy tags still present too
+
+
+def test_app_foley_tag_still_applies_to_songs(rules):
+    result = classify("theme.mp3", ["Resources", "SomeGame.app"], rules, duration_seconds=200.0)
+    assert result.sample_type == "song"
+    assert result.tags == ("app-foley",)
+
+
 def test_loop_type_from_parent_folder_name(rules):
     # Common commercial sample pack layout: "<Pack Name>/Loops/foo.wav" and
     # "<Pack Name>/One Shots/foo.wav" -- the filename alone often carries no

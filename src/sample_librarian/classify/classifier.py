@@ -37,6 +37,13 @@ _LOOP_LEANING_TYPES = frozenset({"breakbeat"})
 _LOOP_KEYWORD = re.compile(r"\bloops?\b")
 _ONE_SHOT_KEYWORD = re.compile(r"\b(?:one ?shots?|1shots?)\b")
 
+# A .app bundle is just a directory on disk -- the scanner walks into it like
+# any other folder, so its internal UI/notification sounds show up as
+# "samples" too. Rather than exclude them, tag them: a system alert or
+# notification chime can be a genuinely fun, weird sound to sample with.
+_APP_BUNDLE_SUFFIX = ".app"
+_APP_FOLEY_TAG = "app-foley"
+
 
 @dataclass(frozen=True)
 class TypeRule:
@@ -94,11 +101,12 @@ def classify(
     song_duration_threshold_seconds: float = DEFAULT_SONG_DURATION_THRESHOLD_SECONDS,
 ) -> ClassificationResult:
     haystack = _normalize(" ".join([filename, *parent_folder_names]))
+    app_foley = (_APP_FOLEY_TAG,) if _is_inside_app_bundle(parent_folder_names) else ()
 
     if duration_seconds is not None and duration_seconds > song_duration_threshold_seconds:
         # Long enough that it's a full track, not a sample -- keyword
         # classification and loop/one-shot labeling don't apply to it.
-        return ClassificationResult(sample_type="song", tags=(), loop_type=None)
+        return ClassificationResult(sample_type="song", tags=app_foley, loop_type=None)
 
     sample_type: str | None = None
     tags: tuple[str, ...] = ()
@@ -111,7 +119,11 @@ def classify(
         haystack, duration_seconds=duration_seconds, sample_type=sample_type
     )
 
-    return ClassificationResult(sample_type=sample_type, tags=tags, loop_type=loop_type)
+    return ClassificationResult(sample_type=sample_type, tags=tags + app_foley, loop_type=loop_type)
+
+
+def _is_inside_app_bundle(parent_folder_names: list[str]) -> bool:
+    return any(name.lower().endswith(_APP_BUNDLE_SUFFIX) for name in parent_folder_names)
 
 
 def _classify_loop_type(

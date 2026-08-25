@@ -1,5 +1,11 @@
 """Filename/folder-path keyword classification against config/taxonomy.yaml,
-plus duration-based song detection and loop-vs-one-shot labeling.
+plus duration-based song detection and loop-vs-one-shot tagging.
+
+Everything a file gets labeled with -- what instrument/drum it is, whether
+it's a loop or one-shot, whether it's a full song, where it came from -- is
+just a tag in one flat set. There's no separate "type" field: a file can
+match several taxonomy rules at once (a "Guitar Riff" is both `guitar` and
+`melody`), which wasn't possible under the old first-match-wins design.
 
 v1 only -- audio-content/waveform analysis is deliberately deferred (see
 samples.classification_method in schema.sql, which leaves room for it later
@@ -16,8 +22,8 @@ import yaml
 
 # A full song download runs a couple of minutes at minimum; nothing that's
 # actually a sample/loop/one-shot realistically does. Files longer than this
-# get sample_type="song" instead of going through keyword classification at
-# all (a song called "Kick Drum Solo" shouldn't get tagged as a kick sample).
+# get tagged "song" instead of going through keyword classification at all
+# (a song called "Kick Drum Solo" shouldn't get tagged "kick").
 DEFAULT_SONG_DURATION_THRESHOLD_SECONDS = 90.0
 
 # Anything this short or shorter is almost certainly a single hit, not a loop.
@@ -29,10 +35,10 @@ DEFAULT_ONE_SHOT_MAX_DURATION_SECONDS = 3.0
 # Found empirically: a real "Kick_3_Sub_RedLine.wav" in the wild is 5.9s.
 ONE_SHOT_LEANING_MAX_DURATION_SECONDS = 8.0
 
-# Sample types that lean strongly one way when duration is unknown and no
-# filename keyword settled it.
-_ONE_SHOT_LEANING_TYPES = frozenset({"kick", "snare", "clap", "hihat", "tom", "percussion"})
-_LOOP_LEANING_TYPES = frozenset({"breakbeat"})
+# Tag names (from taxonomy.yaml's rule names/tags) that lean strongly one way
+# when duration is unknown and no filename keyword settled it.
+_ONE_SHOT_LEANING_TAGS = frozenset({"kick", "snare", "clap", "hihat", "tom", "percussion"})
+_LOOP_LEANING_TAGS = frozenset({"breakbeat"})
 
 _LOOP_KEYWORD = re.compile(r"\bloops?\b")
 _ONE_SHOT_KEYWORD = re.compile(r"\b(?:one ?shots?|1shots?)\b")
@@ -47,16 +53,14 @@ _APP_FOLEY_TAG = "app-foley"
 
 @dataclass(frozen=True)
 class TypeRule:
-    sample_type: str
+    name: str  # the rule's own key in taxonomy.yaml, e.g. "kick" -- itself just a tag now
     tags: tuple[str, ...]
     patterns: tuple[re.Pattern, ...]
 
 
 @dataclass(frozen=True)
 class ClassificationResult:
-    sample_type: str | None
     tags: tuple[str, ...]
-    loop_type: str | None = None  # 'loop' | 'one-shot' | None (indeterminate, or n/a for a song)
 
 
 def load_taxonomy(taxonomy_path: Path) -> list[TypeRule]:
@@ -64,11 +68,11 @@ def load_taxonomy(taxonomy_path: Path) -> list[TypeRule]:
         raw = yaml.safe_load(f)
 
     rules: list[TypeRule] = []
-    for sample_type, definition in raw.get("types", {}).items():
+    for name, definition in raw.get("types", {}).items():
         keywords = definition.get("keywords", [])
         tags = tuple(definition.get("tags", []))
         patterns = tuple(_compile_keyword(k) for k in keywords)
-        rules.append(TypeRule(sample_type=sample_type, tags=tags, patterns=patterns))
+        rules.append(TypeRule(name=name, tags=tags, patterns=patterns))
     return rules
 
 
@@ -105,21 +109,27 @@ def classify(
 
     if duration_seconds is not None and duration_seconds > song_duration_threshold_seconds:
         # Long enough that it's a full track, not a sample -- keyword
-        # classification and loop/one-shot labeling don't apply to it.
-        return ClassificationResult(sample_type="song", tags=app_foley, loop_type=None)
+        # classification and loop/one-shot tagging don't apply to it.
+        return ClassificationResult(tags=_dedupe(("song", *app_foley)))
 
-    sample_type: str | None = None
-    tags: tuple[str, ...] = ()
+    matched_tags: list[str] = []
     for rule in rules:
         if any(p.search(haystack) for p in rule.patterns):
-            sample_type, tags = rule.sample_type, rule.tags
-            break
+            matched_tags.append(rule.name)
+            matched_tags.extend(rule.tags)
 
-    loop_type = _classify_loop_type(
-        haystack, duration_seconds=duration_seconds, sample_type=sample_type
-    )
+    loop_type = _classify_loop_type(haystack, duration_seconds=duration_seconds, matched_tags=matched_tags)
+    if loop_type is not None:
+        matched_tags.append(loop_type)
 
-    return ClassificationResult(sample_type=sample_type, tags=tags + app_foley, loop_type=loop_type)
+    return ClassificationResult(tags=_dedupe((*matched_tags, *app_foley)))
+
+
+def _dedupe(tags: tuple[str, ...]) -> tuple[str, ...]:
+    seen: dict[str, None] = {}
+    for tag in tags:
+        seen.setdefault(tag, None)
+    return tuple(seen.keys())
 
 
 def _is_inside_app_bundle(parent_folder_names: list[str]) -> bool:
@@ -127,7 +137,7 @@ def _is_inside_app_bundle(parent_folder_names: list[str]) -> bool:
 
 
 def _classify_loop_type(
-    haystack: str, *, duration_seconds: float | None, sample_type: str | None
+    haystack: str, *, duration_seconds: float | None, matched_tags: list[str]
 ) -> str | None:
     # An explicit filename keyword always wins over inference.
     if _ONE_SHOT_KEYWORD.search(haystack):
@@ -138,7 +148,7 @@ def _classify_loop_type(
     if duration_seconds is not None:
         threshold = (
             ONE_SHOT_LEANING_MAX_DURATION_SECONDS
-            if sample_type in _ONE_SHOT_LEANING_TYPES
+            if any(t in _ONE_SHOT_LEANING_TAGS for t in matched_tags)
             else DEFAULT_ONE_SHOT_MAX_DURATION_SECONDS
         )
         if duration_seconds <= threshold:
@@ -147,9 +157,9 @@ def _classify_loop_type(
         # to be shorter than the song threshold -- almost certainly a loop.
         return "loop"
 
-    # No duration available at all: fall back to what the sample type usually is.
-    if sample_type in _LOOP_LEANING_TYPES:
+    # No duration available at all: fall back to what the matched tags usually mean.
+    if any(t in _LOOP_LEANING_TAGS for t in matched_tags):
         return "loop"
-    if sample_type in _ONE_SHOT_LEANING_TYPES:
+    if any(t in _ONE_SHOT_LEANING_TAGS for t in matched_tags):
         return "one-shot"
     return None

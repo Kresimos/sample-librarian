@@ -1,7 +1,13 @@
-# Keyword -> sample_type mapping used by classify/classifier.py.
+# Keyword -> tags mapping used by classify/classifier.py.
 # Matched against tokenized filename + parent folder names, case-insensitive.
-# First matching type wins (order matters); "tags" are additional free tags
-# attached alongside sample_type, not mutually exclusive with other types.
+# Everything is a tag now, including each rule's own name (e.g. matching the
+# "kick" rule adds a "kick" tag) -- a file can match multiple rules at once
+# (a "Guitar Riff" gets both `guitar` and `melody`), there's no single
+# exclusive "type" anymore. "loop"/"one-shot" are NOT listed as static tags
+# here on purpose -- classify() derives those dynamically per-file (filename
+# keyword > duration > these tags as a fallback hint), and a static tag here
+# would sometimes contradict that (e.g. a "kick" found inside a real
+# "Loops/" folder should tag "loop", not a hardcoded "one-shot").
 #
 # This is a starting point, not exhaustive — expected to be edited as
 # real files reveal naming patterns this misses.
@@ -9,31 +15,31 @@
 types:
   kick:
     keywords: [kick, bd, bassdrum, "kick drum"]
-    tags: [drum, one-shot]
+    tags: [drum]
 
   snare:
     keywords: [snare, sd, rimshot, rim-shot]
-    tags: [drum, one-shot]
+    tags: [drum]
 
   clap:
     keywords: [clap, claps]
-    tags: [drum, one-shot]
+    tags: [drum]
 
   hihat:
     keywords: [hihat, "hi-hat", "hi hat", hat, hh, cymbal, ride, crash]
-    tags: [drum, one-shot]
+    tags: [drum]
 
   tom:
     keywords: [tom, toms]
-    tags: [drum, one-shot]
+    tags: [drum]
 
   percussion:
     keywords: [perc, percussion, shaker, tambourine, conga, bongo, cowbell]
-    tags: [drum, one-shot]
+    tags: [drum]
 
   breakbeat:
     keywords: [break, breakbeat, "drum loop", drumloop, groove]
-    tags: [drum, loop]
+    tags: [drum]
 
   bass:
     keywords: [bass, bassline, sub, "808"]

@@ -54,7 +54,7 @@ def test_dry_run_sweep_classifies_vendor_and_orphan_buckets(tmp_path: Path):
         assert "bpm" not in orphan_action.cleaned_filename.lower()
         assert orphan_action.bpm == 120.0
         assert orphan_action.bpm_source == "filename_regex"
-        assert orphan_action.sample_type == "breakbeat"
+        assert "breakbeat" in orphan_action.tags
         assert orphan_action.would_write_tempo_metadata is True
 
         # dry run must never populate the samples table -- nothing has actually moved

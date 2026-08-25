@@ -41,10 +41,21 @@ def test_search_by_free_text_matches_tag(tmp_path: Path):
     assert {r["cleaned_filename"] for r in results} == {"Deep Kick.wav", "Bright Hihat.wav"}
 
 
-def test_search_by_sample_type(tmp_path: Path):
+def test_search_by_single_tag(tmp_path: Path):
     conn, _ = _populate(tmp_path)
-    results = repository.search_samples(conn, sample_type="pad")
+    results = repository.search_samples(conn, tags=["pad"])
     assert {r["cleaned_filename"] for r in results} == {"Ambient Pad.wav"}
+
+
+def test_search_by_multiple_tags_requires_all(tmp_path: Path):
+    conn, _ = _populate(tmp_path)
+    # both kick and hihat are tagged "drum" + "one-shot"; only kick has "kick" too
+    results = repository.search_samples(conn, tags=["drum", "kick"])
+    assert {r["cleaned_filename"] for r in results} == {"Deep Kick.wav"}
+
+    # a combination nothing satisfies
+    results = repository.search_samples(conn, tags=["kick", "pad"])
+    assert results == []
 
 
 def test_search_by_bpm_range(tmp_path: Path):
@@ -69,3 +80,28 @@ def test_search_no_filters_returns_everything_active(tmp_path: Path):
     conn, _ = _populate(tmp_path)
     results = repository.search_samples(conn)
     assert len(results) == 3
+
+
+def test_tag_counts_no_filters_is_global_tag_cloud(tmp_path: Path):
+    conn, _ = _populate(tmp_path)
+    counts = repository.tag_counts(conn)
+    assert counts["drum"] == 2  # kick + hihat
+    assert counts["one-shot"] == 3  # all three fixtures are short enough
+    assert counts["pad"] == 1
+
+
+def test_tag_counts_reflects_current_filters_for_faceted_narrowing(tmp_path: Path):
+    conn, _ = _populate(tmp_path)
+    # narrow to just the drum-tagged samples (kick + hihat) -- "pad" should
+    # no longer show up at all among the remaining facets
+    counts = repository.tag_counts(conn, tags=["drum"])
+    assert "pad" in repository.tag_counts(conn)  # sanity: present unfiltered
+    assert "pad" not in counts
+    assert counts["one-shot"] == 2
+
+
+def test_tag_counts_excludes_already_selected_tags(tmp_path: Path):
+    conn, _ = _populate(tmp_path)
+    # once "drum" is selected, offering "drum" again as a facet is useless
+    counts = repository.tag_counts(conn, tags=["drum"])
+    assert "drum" not in counts

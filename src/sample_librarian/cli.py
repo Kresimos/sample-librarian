@@ -116,7 +116,7 @@ def scan_cmd(
         key = f"{action.musical_key}[{action.key_source}]" if action.musical_key else "-"
         click.echo(
             f"  [{action.bucket:6}] {action.source_path} -> {action.target_path}\n"
-            f"           type={action.sample_type or '-'} loop_type={action.loop_type or '-'} tags={tags} bpm={bpm} key={key}"
+            f"           tags={tags} bpm={bpm} key={key}"
         )
 
     for path, error in report.errors:
@@ -220,17 +220,15 @@ def undo_cmd(config_path: Path, scan_run_id: int, skip_confirm: bool) -> None:
 
 @main.command("search")
 @_config_option
-@click.option("--text", default=None, help="Free text against filename, type, or tags.")
-@click.option("--type", "sample_type", default=None, help="Exact sample_type, e.g. kick, or 'song'.")
-@click.option("--loop-type", type=click.Choice(["loop", "one-shot"]), default=None)
+@click.option("--text", default=None, help="Free text against filename or tags.")
+@click.option("--tag", "tags", multiple=True, help="Require this tag (repeat --tag for multiple, AND semantics).")
 @click.option("--bpm-min", type=float, default=None)
 @click.option("--bpm-max", type=float, default=None)
 @click.option("--key", "musical_key", default=None, help="Exact musical key, e.g. C#min.")
 def search_cmd(
     config_path: Path,
     text: str | None,
-    sample_type: str | None,
-    loop_type: str | None,
+    tags: tuple[str, ...],
     bpm_min: float | None,
     bpm_max: float | None,
     musical_key: str | None,
@@ -247,22 +245,19 @@ def search_cmd(
         rows = repository.search_samples(
             conn,
             text=text,
-            sample_type=sample_type,
-            loop_type=loop_type,
+            tags=list(tags) or None,
             bpm_min=bpm_min,
             bpm_max=bpm_max,
             musical_key=musical_key,
         )
 
-    click.echo(f"{len(rows)} result(s)")
-    for row in rows:
-        bpm = f"{row['bpm']:.0f}bpm" if row["bpm"] is not None else "-"
-        key = row["musical_key"] or "-"
-        click.echo(
-            f"  [{row['bucket']:6}] {row['cleaned_filename']:40} "
-            f"type={row['sample_type'] or '-':10} loop_type={row['loop_type'] or '-':9} bpm={bpm:>6} key={key}"
-        )
-        click.echo(f"           {row['current_path']}")
+        click.echo(f"{len(rows)} result(s)")
+        for row in rows:
+            bpm = f"{row['bpm']:.0f}bpm" if row["bpm"] is not None else "-"
+            key = row["musical_key"] or "-"
+            row_tags = ",".join(repository.tags_for_sample(conn, row["id"])) or "-"
+            click.echo(f"  [{row['bucket']:6}] {row['cleaned_filename']:40} bpm={bpm:>6} key={key:6} tags={row_tags}")
+            click.echo(f"           {row['current_path']}")
 
 
 @main.command("stats")
@@ -277,18 +272,14 @@ def stats_cmd(config_path: Path) -> None:
     with repository.open_db(settings.db_path) as conn:
         total = repository.count_samples(conn)
         by_bucket = repository.count_by_bucket(conn)
-        by_type = repository.count_by_type(conn)
-        by_loop_type = repository.count_by_loop_type(conn)
+        by_tag = repository.tag_counts(conn)
 
     click.echo(f"Total samples in library: {total}")
     for bucket, n in by_bucket.items():
         click.echo(f"  {bucket}: {n}")
-    click.echo("By type:")
-    for sample_type, n in by_type.items():
-        click.echo(f"  {sample_type}: {n}")
-    click.echo("By loop/one-shot:")
-    for loop_type, n in by_loop_type.items():
-        click.echo(f"  {loop_type}: {n}")
+    click.echo("By tag:")
+    for tag, n in by_tag.items():
+        click.echo(f"  {tag}: {n}")
 
 
 if __name__ == "__main__":

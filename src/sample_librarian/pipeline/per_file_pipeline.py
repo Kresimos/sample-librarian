@@ -34,8 +34,6 @@ class PlannedAction:
     vendor_name: str | None
     target_path: Path
     cleaned_filename: str
-    sample_type: str | None
-    loop_type: str | None
     tags: tuple[str, ...]
     bpm: float | None
     bpm_source: str | None
@@ -81,7 +79,7 @@ def plan_file(
         decision.bucket == "orphan"
         and metadata.bpm is not None
         and path.suffix.lower() not in _NO_WRITE_BACK_EXTENSIONS
-        and classification.sample_type != "song"  # tempo-conform tagging is for loops, not full tracks
+        and "song" not in classification.tags  # tempo-conform tagging is for loops, not full tracks
     )
 
     return PlannedAction(
@@ -90,8 +88,6 @@ def plan_file(
         vendor_name=decision.vendor_name,
         target_path=target_path,
         cleaned_filename=cleaned_filename,
-        sample_type=classification.sample_type,
-        loop_type=classification.loop_type,
         tags=classification.tags,
         bpm=metadata.bpm,
         bpm_source=metadata.bpm_source,

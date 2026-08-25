@@ -38,12 +38,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """schema.sql's CREATE TABLE IF NOT EXISTS is a no-op against a table that
-    already exists with an older shape, so a genuinely new column needs an
-    explicit, idempotent ALTER TABLE here too.
+    already exists with an older shape, so real schema changes need an
+    explicit, idempotent migration here too.
     """
     existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(samples)")}
-    if "loop_type" not in existing_columns:
-        conn.execute("ALTER TABLE samples ADD COLUMN loop_type TEXT CHECK (loop_type IN ('loop', 'one-shot'))")
+    # sample_type/loop_type were dropped in favor of everything being a tag
+    # (see classify/classifier.py) -- a db file created before that change
+    # still has them.
+    if "sample_type" in existing_columns:
+        conn.execute("DROP INDEX IF EXISTS idx_samples_type")  # DROP COLUMN fails while an index references it
+        conn.execute("ALTER TABLE samples DROP COLUMN sample_type")
+    if "loop_type" in existing_columns:
+        conn.execute("ALTER TABLE samples DROP COLUMN loop_type")
     conn.commit()
 
 
@@ -68,8 +74,6 @@ class SampleRecord:
     cleaned_filename: str
     file_ext: str
     file_size_bytes: int
-    sample_type: str | None
-    loop_type: str | None
     classification_method: str
     bpm: float | None
     bpm_source: str | None
@@ -119,10 +123,10 @@ def upsert_sample(conn: sqlite3.Connection, record: SampleRecord, scan_run_id: i
         INSERT INTO samples (
             current_path, bucket, source_path, is_symlink_at_current, stub_left_at_source,
             vendor_name, original_filename, cleaned_filename, file_ext, file_size_bytes,
-            date_added, sample_type, loop_type, classification_method, bpm, bpm_source,
+            date_added, classification_method, bpm, bpm_source,
             musical_key, key_source, acid_chunk_present, duration_seconds, sample_rate,
             channels, scan_run_id, last_seen_at, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
         ON CONFLICT(current_path) DO UPDATE SET
             bucket = excluded.bucket,
             source_path = excluded.source_path,
@@ -130,8 +134,6 @@ def upsert_sample(conn: sqlite3.Connection, record: SampleRecord, scan_run_id: i
             stub_left_at_source = excluded.stub_left_at_source,
             vendor_name = excluded.vendor_name,
             cleaned_filename = excluded.cleaned_filename,
-            sample_type = excluded.sample_type,
-            loop_type = excluded.loop_type,
             classification_method = excluded.classification_method,
             bpm = excluded.bpm,
             bpm_source = excluded.bpm_source,
@@ -157,8 +159,6 @@ def upsert_sample(conn: sqlite3.Connection, record: SampleRecord, scan_run_id: i
             record.file_ext,
             record.file_size_bytes,
             now_iso(),
-            record.sample_type,
-            record.loop_type,
             record.classification_method,
             record.bpm,
             record.bpm_source,
@@ -200,34 +200,42 @@ def _replace_tags(conn: sqlite3.Connection, sample_id: int, tags: tuple[str, ...
     conn.commit()
 
 
-def search_samples(
-    conn: sqlite3.Connection,
+def _base_filter(
     *,
-    text: str | None = None,
-    sample_type: str | None = None,
-    loop_type: str | None = None,
-    bpm_min: float | None = None,
-    bpm_max: float | None = None,
-    musical_key: str | None = None,
-) -> list[sqlite3.Row]:
-    """Plain LIKE/JOIN search -- see schema.sql for why this isn't FTS5."""
+    text: str | None,
+    tags: list[str] | None,
+    bpm_min: float | None,
+    bpm_max: float | None,
+    musical_key: str | None,
+) -> tuple[list[str], list]:
+    """Shared WHERE-clause building for search_samples and tag_counts, so
+    faceted narrowing (tag_counts) always reflects exactly the same filter
+    semantics as the actual search results.
+    """
     clauses = ["s.status = 'active'"]
     params: list = []
 
     if text:
         clauses.append(
-            "(s.cleaned_filename LIKE ? OR s.sample_type LIKE ? OR EXISTS ("
+            "(s.cleaned_filename LIKE ? OR EXISTS ("
             "SELECT 1 FROM sample_tags st JOIN tags t ON t.id = st.tag_id "
             "WHERE st.sample_id = s.id AND t.name LIKE ?))"
         )
         like = f"%{text}%"
-        params.extend([like, like, like])
-    if sample_type:
-        clauses.append("s.sample_type = ?")
-        params.append(sample_type)
-    if loop_type:
-        clauses.append("s.loop_type = ?")
-        params.append(loop_type)
+        params.extend([like, like])
+
+    if tags:
+        # Sample must have ALL requested tags (AND, not any-of) -- count how
+        # many of the requested tags it has and require that to equal the
+        # number requested.
+        placeholders = ",".join("?" for _ in tags)
+        clauses.append(
+            "(SELECT COUNT(DISTINCT t.name) FROM sample_tags st JOIN tags t ON t.id = st.tag_id "
+            f"WHERE st.sample_id = s.id AND t.name IN ({placeholders})) = ?"
+        )
+        params.extend(tags)
+        params.append(len(tags))
+
     if bpm_min is not None:
         clauses.append("s.bpm >= ?")
         params.append(bpm_min)
@@ -238,12 +246,61 @@ def search_samples(
         clauses.append("s.musical_key = ?")
         params.append(musical_key)
 
-    query = (
-        "SELECT DISTINCT s.* FROM samples s WHERE "
-        + " AND ".join(clauses)
-        + " ORDER BY s.cleaned_filename"
-    )
+    return clauses, params
+
+
+def search_samples(
+    conn: sqlite3.Connection,
+    *,
+    text: str | None = None,
+    tags: list[str] | None = None,
+    bpm_min: float | None = None,
+    bpm_max: float | None = None,
+    musical_key: str | None = None,
+) -> list[sqlite3.Row]:
+    """Plain LIKE/JOIN search -- see schema.sql for why this isn't FTS5."""
+    clauses, params = _base_filter(text=text, tags=tags, bpm_min=bpm_min, bpm_max=bpm_max, musical_key=musical_key)
+    query = "SELECT DISTINCT s.* FROM samples s WHERE " + " AND ".join(clauses) + " ORDER BY s.cleaned_filename"
     return conn.execute(query, params).fetchall()
+
+
+def tag_counts(
+    conn: sqlite3.Connection,
+    *,
+    text: str | None = None,
+    tags: list[str] | None = None,
+    bpm_min: float | None = None,
+    bpm_max: float | None = None,
+    musical_key: str | None = None,
+) -> dict[str, int]:
+    """How many currently-matching samples have each tag, for faceted
+    narrowing: call with the filters already applied so far to get counts for
+    what's still worth offering next. Tags already selected are excluded
+    (nothing to learn from re-showing them). Called with no filters at all,
+    this is just the overall tag cloud -- used for `stats`.
+    """
+    clauses, params = _base_filter(text=text, tags=tags, bpm_min=bpm_min, bpm_max=bpm_max, musical_key=musical_key)
+    query = (
+        "SELECT t.name AS tag, COUNT(DISTINCT s.id) AS n "
+        "FROM samples s JOIN sample_tags st ON st.sample_id = s.id JOIN tags t ON t.id = st.tag_id "
+        "WHERE " + " AND ".join(clauses) + " GROUP BY t.name ORDER BY n DESC, t.name"
+    )
+    rows = conn.execute(query, params).fetchall()
+    already_selected = set(tags or [])
+    return {row["tag"]: row["n"] for row in rows if row["tag"] not in already_selected}
+
+
+def tags_for_sample(conn: sqlite3.Connection, sample_id: int) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT t.name FROM tags t
+        JOIN sample_tags st ON st.tag_id = t.id
+        WHERE st.sample_id = ?
+        ORDER BY t.name
+        """,
+        (sample_id,),
+    ).fetchall()
+    return [row["name"] for row in rows]
 
 
 def count_samples(conn: sqlite3.Connection) -> int:
@@ -253,19 +310,3 @@ def count_samples(conn: sqlite3.Connection) -> int:
 def count_by_bucket(conn: sqlite3.Connection) -> dict[str, int]:
     rows = conn.execute("SELECT bucket, COUNT(*) AS n FROM samples GROUP BY bucket").fetchall()
     return {row["bucket"]: row["n"] for row in rows}
-
-
-def count_by_type(conn: sqlite3.Connection) -> dict[str, int]:
-    rows = conn.execute(
-        "SELECT COALESCE(sample_type, '(unclassified)') AS t, COUNT(*) AS n "
-        "FROM samples GROUP BY t ORDER BY n DESC"
-    ).fetchall()
-    return {row["t"]: row["n"] for row in rows}
-
-
-def count_by_loop_type(conn: sqlite3.Connection) -> dict[str, int]:
-    rows = conn.execute(
-        "SELECT COALESCE(loop_type, '(unknown)') AS t, COUNT(*) AS n "
-        "FROM samples GROUP BY t ORDER BY n DESC"
-    ).fetchall()
-    return {row["t"]: row["n"] for row in rows}

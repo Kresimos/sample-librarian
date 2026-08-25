@@ -31,13 +31,22 @@ final class DatabaseTests: XCTestCase {
     func testSearchByFreeTextMatchesTag() throws {
         let db = try Database(path: dbURL)
         let results = try db.search(text: "drum")
-        XCTAssertEqual(Set(results.map(\.cleanedFilename)), ["Deep Kick.wav", "Bright Hihat.wav"])
+        XCTAssertEqual(Set(results.map(\.cleanedFilename)), ["Deep Kick.wav", "Bright Hihat.wav", "Break Groove.wav"])
     }
 
-    func testSearchBySampleType() throws {
+    func testSearchBySingleTag() throws {
         let db = try Database(path: dbURL)
-        let results = try db.search(sampleType: "pad")
+        let results = try db.search(tags: ["pad"])
         XCTAssertEqual(Set(results.map(\.cleanedFilename)), ["Ambient Pad.wav"])
+    }
+
+    func testSearchByMultipleTagsRequiresAll() throws {
+        let db = try Database(path: dbURL)
+        let results = try db.search(tags: ["drum", "kick"])
+        XCTAssertEqual(Set(results.map(\.cleanedFilename)), ["Deep Kick.wav"])
+
+        let none = try db.search(tags: ["kick", "pad"])
+        XCTAssertTrue(none.isEmpty)
     }
 
     func testSearchByBpmRange() throws {
@@ -52,23 +61,27 @@ final class DatabaseTests: XCTestCase {
         XCTAssertTrue(results.isEmpty)
     }
 
-    func testSearchByLoopType() throws {
+    func testSongTaggedSampleHasNoLoopOrOneShotTag() throws {
         let db = try Database(path: dbURL)
-        let results = try db.search(loopType: "loop")
-        XCTAssertEqual(Set(results.map(\.cleanedFilename)), ["Break Groove.wav"])
-    }
-
-    func testSongSampleTypeHasNoLoopType() throws {
-        let db = try Database(path: dbURL)
-        let results = try db.search(sampleType: "song")
+        let results = try db.search(tags: ["song"])
         XCTAssertEqual(results.count, 1)
-        XCTAssertNil(results[0].loopType)
+        XCTAssertFalse(results[0].tags.contains("loop"))
+        XCTAssertFalse(results[0].tags.contains("one-shot"))
     }
 
-    func testDistinctSampleTypes() throws {
+    func testTagCountsNoFiltersIsGlobalTagCloud() throws {
         let db = try Database(path: dbURL)
-        let types = try db.distinctSampleTypes()
-        XCTAssertEqual(types, ["breakbeat", "hihat", "kick", "pad", "song"])
+        let counts = Dictionary(uniqueKeysWithValues: try db.tagCounts())
+        XCTAssertEqual(counts["drum"], 3)  // kick + hihat + breakbeat
+        XCTAssertEqual(counts["pad"], 1)
+    }
+
+    func testTagCountsReflectsCurrentFiltersForFacetedNarrowing() throws {
+        let db = try Database(path: dbURL)
+        let counts = Dictionary(uniqueKeysWithValues: try db.tagCounts(tags: ["drum"]))
+        XCTAssertNil(counts["pad"])  // no longer relevant once narrowed to drum-tagged samples
+        XCTAssertNil(counts["drum"])  // already-selected tags aren't re-offered
+        XCTAssertEqual(counts["one-shot"], 2)
     }
 
     func testResolvedFileURLFollowsSymlink() throws {
@@ -78,7 +91,7 @@ final class DatabaseTests: XCTestCase {
 
         let record = SampleRecord(
             id: 1, currentPath: realFile.path, bucket: "orphan", cleanedFilename: "x",
-            sampleType: nil, loopType: nil, bpm: nil, musicalKey: nil, durationSeconds: nil, tags: []
+            bpm: nil, musicalKey: nil, durationSeconds: nil, tags: []
         )
         XCTAssertEqual(record.resolvedFileURL.path, realFile.resolvingSymlinksInPath().path)
     }
@@ -95,23 +108,37 @@ final class DatabaseTests: XCTestCase {
         let schema = """
         CREATE TABLE samples (
             id INTEGER PRIMARY KEY, current_path TEXT, bucket TEXT,
-            cleaned_filename TEXT, sample_type TEXT, loop_type TEXT, bpm REAL, musical_key TEXT,
+            cleaned_filename TEXT, bpm REAL, musical_key TEXT,
             duration_seconds REAL, status TEXT DEFAULT 'active'
         );
         CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
         CREATE TABLE sample_tags (sample_id INTEGER, tag_id INTEGER);
 
-        INSERT INTO samples (id, current_path, bucket, cleaned_filename, sample_type, loop_type, bpm, musical_key, status)
+        INSERT INTO samples (id, current_path, bucket, cleaned_filename, bpm, musical_key, status)
         VALUES
-            (1, '/lib/unsorted/Deep Kick.wav', 'orphan', 'Deep Kick.wav', 'kick', 'one-shot', 95, 'Amin', 'active'),
-            (2, '/lib/unsorted/Bright Hihat.wav', 'orphan', 'Bright Hihat.wav', 'hihat', 'one-shot', 140, NULL, 'active'),
-            (3, '/lib/unsorted/Ambient Pad.wav', 'orphan', 'Ambient Pad.wav', 'pad', NULL, NULL, 'Cmaj', 'active'),
-            (4, '/lib/unsorted/Gone.wav', 'orphan', 'Gone.wav', 'kick', 'one-shot', NULL, NULL, 'missing'),
-            (5, '/lib/unsorted/Break Groove.wav', 'orphan', 'Break Groove.wav', 'breakbeat', 'loop', 128, NULL, 'active'),
-            (6, '/lib/unsorted/Some Song.mp3', 'orphan', 'Some Song.mp3', 'song', NULL, NULL, NULL, 'active');
+            (1, '/lib/unsorted/Deep Kick.wav', 'orphan', 'Deep Kick.wav', 95, 'Amin', 'active'),
+            (2, '/lib/unsorted/Bright Hihat.wav', 'orphan', 'Bright Hihat.wav', 140, NULL, 'active'),
+            (3, '/lib/unsorted/Ambient Pad.wav', 'orphan', 'Ambient Pad.wav', NULL, 'Cmaj', 'active'),
+            (4, '/lib/unsorted/Gone.wav', 'orphan', 'Gone.wav', NULL, NULL, 'missing'),
+            (5, '/lib/unsorted/Break Groove.wav', 'orphan', 'Break Groove.wav', 128, NULL, 'active'),
+            (6, '/lib/unsorted/Some Song.mp3', 'orphan', 'Some Song.mp3', NULL, NULL, 'active');
 
-        INSERT INTO tags (id, name) VALUES (1, 'drum'), (2, 'one-shot'), (3, 'ambient');
-        INSERT INTO sample_tags (sample_id, tag_id) VALUES (1, 1), (1, 2), (2, 1), (2, 2), (3, 3);
+        INSERT INTO tags (id, name) VALUES
+            (1, 'drum'), (2, 'one-shot'), (3, 'ambient'), (4, 'kick'), (5, 'hihat'),
+            (6, 'pad'), (7, 'melodic'), (8, 'synth'), (9, 'breakbeat'), (10, 'loop'), (11, 'song');
+
+        -- kick: drum, one-shot, kick
+        INSERT INTO sample_tags (sample_id, tag_id) VALUES (1, 1), (1, 2), (1, 4);
+        -- hihat: drum, one-shot, hihat
+        INSERT INTO sample_tags (sample_id, tag_id) VALUES (2, 1), (2, 2), (2, 5);
+        -- pad: pad, melodic, synth, ambient
+        INSERT INTO sample_tags (sample_id, tag_id) VALUES (3, 6), (3, 7), (3, 8), (3, 3);
+        -- gone (missing): kick, one-shot -- must never surface via search
+        INSERT INTO sample_tags (sample_id, tag_id) VALUES (4, 4), (4, 2);
+        -- breakbeat loop: breakbeat, drum, loop
+        INSERT INTO sample_tags (sample_id, tag_id) VALUES (5, 9), (5, 1), (5, 10);
+        -- song: just 'song', no loop/one-shot
+        INSERT INTO sample_tags (sample_id, tag_id) VALUES (6, 11);
         """
 
         var errorMessage: UnsafeMutablePointer<Int8>?

@@ -39,36 +39,135 @@ public final class Database {
 
     /// Mirrors sample_librarian.db.repository.search_samples on the Python
     /// side -- same filters, same plain LIKE/JOIN approach (see schema.sql
-    /// for why this isn't FTS5).
+    /// for why this isn't FTS5). `tags` requires ALL given tags (AND, not
+    /// any-of) -- there's no separate type/loop-type filter anymore, it's
+    /// all just tags now.
     public func search(
         text: String? = nil,
-        sampleType: String? = nil,
-        loopType: String? = nil,
+        tags: [String] = [],
         bpmMin: Double? = nil,
         bpmMax: Double? = nil,
         musicalKey: String? = nil
     ) throws -> [SampleRecord] {
+        let (clauses, bindings) = Self.baseFilter(text: text, tags: tags, bpmMin: bpmMin, bpmMax: bpmMax, musicalKey: musicalKey)
+
+        let sql = """
+        SELECT s.id, s.current_path, s.bucket, s.cleaned_filename,
+               s.bpm, s.musical_key, s.duration_seconds
+        FROM samples s
+        WHERE \(clauses.joined(separator: " AND "))
+        ORDER BY s.cleaned_filename
+        """
+
+        var statement: OpaquePointer?
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(handle)))
+        }
+        Self.bind(bindings, to: statement)
+
+        var results: [SampleRecord] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let sampleId = sqlite3_column_int64(statement, 0)
+            results.append(SampleRecord(from: statement!, tags: try fetchTags(forSampleId: sampleId)))
+        }
+        return results
+    }
+
+    /// For faceted narrowing: given the same filters as `search`, how many
+    /// matching samples have each tag? Already-selected tags are excluded
+    /// (nothing to learn from re-showing them). Called with no filters at
+    /// all, this is just the overall tag cloud.
+    public func tagCounts(
+        text: String? = nil,
+        tags: [String] = [],
+        bpmMin: Double? = nil,
+        bpmMax: Double? = nil,
+        musicalKey: String? = nil
+    ) throws -> [(tag: String, count: Int)] {
+        let (clauses, bindings) = Self.baseFilter(text: text, tags: tags, bpmMin: bpmMin, bpmMax: bpmMax, musicalKey: musicalKey)
+
+        let sql = """
+        SELECT t.name AS tag, COUNT(DISTINCT s.id) AS n
+        FROM samples s
+        JOIN sample_tags st ON st.sample_id = s.id
+        JOIN tags t ON t.id = st.tag_id
+        WHERE \(clauses.joined(separator: " AND "))
+        GROUP BY t.name
+        ORDER BY n DESC, t.name
+        """
+
+        var statement: OpaquePointer?
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(handle)))
+        }
+        Self.bind(bindings, to: statement)
+
+        let alreadySelected = Set(tags)
+        var results: [(String, Int)] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let cString = sqlite3_column_text(statement, 0) else { continue }
+            let tag = String(cString: cString)
+            if alreadySelected.contains(tag) { continue }
+            results.append((tag, Int(sqlite3_column_int64(statement, 1))))
+        }
+        return results
+    }
+
+    private func fetchTags(forSampleId sampleId: Int64) throws -> [String] {
+        let sql = """
+        SELECT t.name FROM tags t
+        JOIN sample_tags st ON st.tag_id = t.id
+        WHERE st.sample_id = ?
+        ORDER BY t.name
+        """
+        var statement: OpaquePointer?
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(handle)))
+        }
+        sqlite3_bind_int64(statement, 1, sampleId)
+
+        var result: [String] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let cString = sqlite3_column_text(statement, 0) {
+                result.append(String(cString: cString))
+            }
+        }
+        return result
+    }
+
+    // MARK: - Shared filter building (mirrors repository._base_filter on the Python side)
+
+    private static func baseFilter(
+        text: String?,
+        tags: [String],
+        bpmMin: Double?,
+        bpmMax: Double?,
+        musicalKey: String?
+    ) -> (clauses: [String], bindings: [Bindable]) {
         var clauses = ["s.status = 'active'"]
         var bindings: [Bindable] = []
 
         if let text, !text.isEmpty {
             clauses.append(
-                "(s.cleaned_filename LIKE ? OR s.sample_type LIKE ? OR EXISTS (" +
+                "(s.cleaned_filename LIKE ? OR EXISTS (" +
                 "SELECT 1 FROM sample_tags st JOIN tags t ON t.id = st.tag_id " +
                 "WHERE st.sample_id = s.id AND t.name LIKE ?))"
             )
             let like = "%\(text)%"
             bindings.append(.text(like))
             bindings.append(.text(like))
-            bindings.append(.text(like))
         }
-        if let sampleType, !sampleType.isEmpty {
-            clauses.append("s.sample_type = ?")
-            bindings.append(.text(sampleType))
-        }
-        if let loopType, !loopType.isEmpty {
-            clauses.append("s.loop_type = ?")
-            bindings.append(.text(loopType))
+        if !tags.isEmpty {
+            let placeholders = tags.map { _ in "?" }.joined(separator: ",")
+            clauses.append(
+                "(SELECT COUNT(DISTINCT t.name) FROM sample_tags st JOIN tags t ON t.id = st.tag_id " +
+                "WHERE st.sample_id = s.id AND t.name IN (\(placeholders))) = ?"
+            )
+            for tag in tags { bindings.append(.text(tag)) }
+            bindings.append(.int(tags.count))
         }
         if let bpmMin {
             clauses.append("s.bpm >= ?")
@@ -83,20 +182,10 @@ public final class Database {
             bindings.append(.text(musicalKey))
         }
 
-        let sql = """
-        SELECT s.id, s.current_path, s.bucket, s.cleaned_filename, s.sample_type,
-               s.loop_type, s.bpm, s.musical_key, s.duration_seconds
-        FROM samples s
-        WHERE \(clauses.joined(separator: " AND "))
-        ORDER BY s.cleaned_filename
-        """
+        return (clauses, bindings)
+    }
 
-        var statement: OpaquePointer?
-        defer { sqlite3_finalize(statement) }
-        guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(handle)))
-        }
-
+    private static func bind(_ bindings: [Bindable], to statement: OpaquePointer?) {
         for (index, binding) in bindings.enumerated() {
             let position = Int32(index + 1)
             switch binding {
@@ -104,61 +193,17 @@ public final class Database {
                 sqlite3_bind_text(statement, position, value, -1, SQLITE_TRANSIENT)
             case .double(let value):
                 sqlite3_bind_double(statement, position, value)
+            case .int(let value):
+                sqlite3_bind_int64(statement, position, Int64(value))
             }
         }
-
-        var results: [SampleRecord] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            results.append(SampleRecord(from: statement!, tags: try tags(forSampleId: sqlite3_column_int64(statement, 0))))
-        }
-        return results
-    }
-
-    private func tags(forSampleId sampleId: Int64) throws -> [String] {
-        let sql = """
-        SELECT t.name FROM tags t
-        JOIN sample_tags st ON st.tag_id = t.id
-        WHERE st.sample_id = ?
-        ORDER BY t.name
-        """
-        var statement: OpaquePointer?
-        defer { sqlite3_finalize(statement) }
-        guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(handle)))
-        }
-        sqlite3_bind_int64(statement, 1, sampleId)
-
-        var tags: [String] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            if let cString = sqlite3_column_text(statement, 0) {
-                tags.append(String(cString: cString))
-            }
-        }
-        return tags
-    }
-
-    /// Distinct sample_type values currently in the library, for populating
-    /// a type filter dropdown.
-    public func distinctSampleTypes() throws -> [String] {
-        let sql = "SELECT DISTINCT sample_type FROM samples WHERE sample_type IS NOT NULL AND status = 'active' ORDER BY sample_type"
-        var statement: OpaquePointer?
-        defer { sqlite3_finalize(statement) }
-        guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(handle)))
-        }
-        var types: [String] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            if let cString = sqlite3_column_text(statement, 0) {
-                types.append(String(cString: cString))
-            }
-        }
-        return types
     }
 }
 
 private enum Bindable {
     case text(String)
     case double(Double)
+    case int(Int)
 }
 
 // sqlite3_bind_text needs an explicit "destructor" telling it whether to
@@ -174,24 +219,18 @@ extension SampleRecord {
         let currentPath = String(cString: sqlite3_column_text(statement, 1))
         let bucket = String(cString: sqlite3_column_text(statement, 2))
         let cleanedFilename = String(cString: sqlite3_column_text(statement, 3))
-        let sampleType = sqlite3_column_type(statement, 4) == SQLITE_NULL
-            ? nil : String(cString: sqlite3_column_text(statement, 4))
-        let loopType = sqlite3_column_type(statement, 5) == SQLITE_NULL
+        let bpm = sqlite3_column_type(statement, 4) == SQLITE_NULL
+            ? nil : sqlite3_column_double(statement, 4)
+        let musicalKey = sqlite3_column_type(statement, 5) == SQLITE_NULL
             ? nil : String(cString: sqlite3_column_text(statement, 5))
-        let bpm = sqlite3_column_type(statement, 6) == SQLITE_NULL
+        let duration = sqlite3_column_type(statement, 6) == SQLITE_NULL
             ? nil : sqlite3_column_double(statement, 6)
-        let musicalKey = sqlite3_column_type(statement, 7) == SQLITE_NULL
-            ? nil : String(cString: sqlite3_column_text(statement, 7))
-        let duration = sqlite3_column_type(statement, 8) == SQLITE_NULL
-            ? nil : sqlite3_column_double(statement, 8)
 
         self.init(
             id: id,
             currentPath: currentPath,
             bucket: bucket,
             cleanedFilename: cleanedFilename,
-            sampleType: sampleType,
-            loopType: loopType,
             bpm: bpm,
             musicalKey: musicalKey,
             durationSeconds: duration,

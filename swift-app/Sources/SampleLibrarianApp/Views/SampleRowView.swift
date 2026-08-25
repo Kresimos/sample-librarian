@@ -3,8 +3,12 @@ import SampleLibrarianCore
 
 struct SampleRowView: View {
     let sample: SampleRecord
+    /// Invoked when the user clicks one of this row's tag chips, to add it
+    /// to the active filter -- the faceted-narrowing "click a tag to drill
+    /// in" interaction.
+    var onTagTapped: (String) -> Void = { _ in }
 
-    private var isSong: Bool { sample.sampleType == "song" }
+    private var isSong: Bool { sample.tags.contains("song") }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
@@ -14,14 +18,23 @@ struct SampleRowView: View {
                 .foregroundStyle(isSong ? .secondary : .primary)
                 .italic(isSong)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Text(sample.sampleType ?? "-")
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(isSong ? Color.orange : .secondary)
-                .frame(width: 80, alignment: .leading)
-            Text(sample.loopType ?? "-")
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .frame(width: 66, alignment: .leading)
+
+            HStack(spacing: 4) {
+                ForEach(sample.tags, id: \.self) { tag in
+                    Text(tag)
+                        .font(.system(.caption2, design: .monospaced))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            (tag == "song" ? Color.orange : Color.secondary)
+                                .opacity(0.15), in: RoundedRectangle(cornerRadius: 4)
+                        )
+                        .foregroundStyle(tag == "song" ? Color.orange : .secondary)
+                        .onTapGesture { onTagTapped(tag) }
+                }
+            }
+            .frame(width: 220, alignment: .leading)
+
             Text(bpmLabel)
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)

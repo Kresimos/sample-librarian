@@ -6,10 +6,7 @@ final class BrowserViewModel: ObservableObject {
     @Published var searchText: String = "" {
         didSet { reload() }
     }
-    @Published var selectedType: String? = nil {
-        didSet { reload() }
-    }
-    @Published var selectedLoopType: String? = nil {
+    @Published private(set) var selectedTags: [String] = [] {
         didSet { reload() }
     }
     @Published var bpmMinText: String = "" {
@@ -22,7 +19,7 @@ final class BrowserViewModel: ObservableObject {
         didSet { reload() }
     }
     @Published private(set) var samples: [SampleRecord] = []
-    @Published private(set) var availableTypes: [String] = []
+    @Published private(set) var availableFacets: [(tag: String, count: Int)] = []
     @Published var errorMessage: String?
     @Published var selection: SampleRecord.ID?
     @Published private(set) var isRescanning = false
@@ -40,18 +37,31 @@ final class BrowserViewModel: ObservableObject {
         reload()
     }
 
+    func selectTag(_ tag: String) {
+        guard !selectedTags.contains(tag) else { return }
+        selectedTags.append(tag)
+    }
+
+    func deselectTag(_ tag: String) {
+        selectedTags.removeAll { $0 == tag }
+    }
+
     func reload() {
         guard let database else { return }
         do {
+            let bpmMin = Double(bpmMinText.trimmingCharacters(in: .whitespaces))
+            let bpmMax = Double(bpmMaxText.trimmingCharacters(in: .whitespaces))
+            let key = keyText.trimmingCharacters(in: .whitespaces)
+            let text = searchText.isEmpty ? nil : searchText
+
             samples = try database.search(
-                text: searchText.isEmpty ? nil : searchText,
-                sampleType: selectedType,
-                loopType: selectedLoopType,
-                bpmMin: Double(bpmMinText.trimmingCharacters(in: .whitespaces)),
-                bpmMax: Double(bpmMaxText.trimmingCharacters(in: .whitespaces)),
-                musicalKey: keyText.trimmingCharacters(in: .whitespaces).isEmpty ? nil : keyText
+                text: text, tags: selectedTags, bpmMin: bpmMin, bpmMax: bpmMax,
+                musicalKey: key.isEmpty ? nil : key
             )
-            availableTypes = try database.distinctSampleTypes()
+            availableFacets = try database.tagCounts(
+                text: text, tags: selectedTags, bpmMin: bpmMin, bpmMax: bpmMax,
+                musicalKey: key.isEmpty ? nil : key
+            )
             errorMessage = nil
         } catch {
             errorMessage = "Search failed: \(error)"
@@ -86,13 +96,18 @@ struct BrowserView: View {
         VStack(spacing: 0) {
             SearchFilterBar(
                 searchText: $viewModel.searchText,
-                selectedType: $viewModel.selectedType,
-                selectedLoopType: $viewModel.selectedLoopType,
                 bpmMinText: $viewModel.bpmMinText,
                 bpmMaxText: $viewModel.bpmMaxText,
-                keyText: $viewModel.keyText,
-                availableTypes: viewModel.availableTypes
+                keyText: $viewModel.keyText
             )
+
+            FacetChipsView(
+                selectedTags: viewModel.selectedTags,
+                availableFacets: viewModel.availableFacets,
+                onSelect: viewModel.selectTag,
+                onDeselect: viewModel.deselectTag
+            )
+            Divider()
 
             if let errorMessage = viewModel.errorMessage {
                 ContentUnavailableMessage(message: errorMessage)
@@ -102,13 +117,13 @@ struct BrowserView: View {
                 // List gives arrow-key navigation + selection highlighting for
                 // free once it has focus -- no custom key handling needed.
                 List(viewModel.samples, selection: $viewModel.selection) { sample in
-                    SampleRowView(sample: sample)
+                    SampleRowView(sample: sample, onTagTapped: viewModel.selectTag)
                 }
                 .listStyle(.plain)
                 .font(.system(.body, design: .monospaced))
             }
         }
-        .frame(minWidth: 520, minHeight: 360)
+        .frame(minWidth: 560, minHeight: 380)
         .background(Color(nsColor: .textBackgroundColor))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

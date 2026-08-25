@@ -2,13 +2,15 @@ import Foundation
 
 /// Mirrors a row of the `samples` table (see db/schema.sql on the Python
 /// side). Only the fields the browser/search UI actually needs.
+///
+/// There's no separate type/loop-type field -- everything (instrument,
+/// drum/melodic/vocal/fx, loop vs one-shot, "song", "app-foley") is just a
+/// tag, matching the Python side's classify/classifier.py.
 public struct SampleRecord: Identifiable, Hashable, Sendable {
     public let id: Int64
     public let currentPath: String
     public let bucket: String  // "vendor" | "orphan"
     public let cleanedFilename: String
-    public let sampleType: String?  // includes "song" for anything over the duration threshold
-    public let loopType: String?  // "loop" | "one-shot" | nil
     public let bpm: Double?
     public let musicalKey: String?
     public let durationSeconds: Double?
@@ -19,8 +21,6 @@ public struct SampleRecord: Identifiable, Hashable, Sendable {
         currentPath: String,
         bucket: String,
         cleanedFilename: String,
-        sampleType: String?,
-        loopType: String?,
         bpm: Double?,
         musicalKey: String?,
         durationSeconds: Double?,
@@ -30,8 +30,6 @@ public struct SampleRecord: Identifiable, Hashable, Sendable {
         self.currentPath = currentPath
         self.bucket = bucket
         self.cleanedFilename = cleanedFilename
-        self.sampleType = sampleType
-        self.loopType = loopType
         self.bpm = bpm
         self.musicalKey = musicalKey
         self.durationSeconds = durationSeconds

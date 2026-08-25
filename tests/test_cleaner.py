@@ -34,6 +34,12 @@ def test_empty_after_cleanup_falls_back_to_untitled():
     assert clean_filename("___120bpm___") == "untitled"
 
 
+def test_decodes_url_percent_encoding():
+    result = clean_filename("Track%20Name%20-%20SoundLoadMate.com")
+    assert "%20" not in result
+    assert result == "Track Name Soundloadmate.com"
+
+
 def test_make_unique_no_collision():
     assert make_unique("Kick Heavy", set()) == "Kick Heavy"
 

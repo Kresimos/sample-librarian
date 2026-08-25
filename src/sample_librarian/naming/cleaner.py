@@ -7,11 +7,12 @@ database now, not the filename.
 from __future__ import annotations
 
 import re
+from urllib.parse import unquote
 
 from sample_librarian.audio.filename_regex import strip_recognized_tokens
 
 _SEPARATOR_CHARS = re.compile(r"[_\-]+")
-_JUNK_CHARS = re.compile(r"[\[\](){}]")
+_JUNK_CHARS = re.compile(r"[\[\](){}%]")
 _WHITESPACE_RUN = re.compile(r"\s+")
 _STRIP_EDGE_PUNCT = re.compile(r"^[\s\-_.]+|[\s\-_.]+$")
 
@@ -21,7 +22,10 @@ _MINOR_WORDS = {"a", "an", "the", "of", "in", "on", "and", "or", "vs"}
 
 def clean_filename(stem: str) -> str:
     """Clean a filename stem (no extension) into a consistent, readable form."""
-    text = strip_recognized_tokens(stem)
+    # Files downloaded from a URL sometimes keep it percent-encoded verbatim
+    # (e.g. "Track%20Name" from a "...com/Track%20Name.mp3" link).
+    text = unquote(stem)
+    text = strip_recognized_tokens(text)
     text = _JUNK_CHARS.sub(" ", text)
     text = _SEPARATOR_CHARS.sub(" ", text)
     text = _WHITESPACE_RUN.sub(" ", text).strip()

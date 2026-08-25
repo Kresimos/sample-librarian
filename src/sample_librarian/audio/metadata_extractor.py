@@ -9,9 +9,6 @@ from pathlib import Path
 
 from sample_librarian.audio import compressed_tags, filename_regex, probe, riff_chunks
 
-_COMPRESSED_EXTENSIONS = {".mp3", ".m4a", ".flac"}
-_AIFF_EXTENSIONS = {".aif", ".aiff"}
-
 
 class UnsupportedFormatError(Exception):
     pass
@@ -29,15 +26,53 @@ class ExtractedMetadata:
     acid_chunk_present: bool
 
 
+def _sniff_format(path: Path) -> str | None:
+    """A file's extension isn't always trustworthy -- found in the wild:
+    a Logic Pro export that's genuinely AIFF content (its header literally
+    says 'Creator: Logic Pro') sitting on disk with a .m4a extension. Sniff
+    magic bytes and prefer that over the extension when they disagree.
+    Returns 'wav' | 'aiff' | 'flac' | 'mp4' | 'mp3' | None (inconclusive).
+    """
+    try:
+        with path.open("rb") as f:
+            header = f.read(12)
+    except OSError:
+        return None
+
+    if len(header) < 12:
+        return None
+    if header[0:4] == b"RIFF" and header[8:12] == b"WAVE":
+        return "wav"
+    if header[0:4] == b"FORM" and header[8:12] in (b"AIFF", b"AIFC"):
+        return "aiff"
+    if header[0:4] == b"fLaC":
+        return "flac"
+    if header[4:8] == b"ftyp":
+        return "mp4"
+    if header[0:3] == b"ID3" or (header[0] == 0xFF and (header[1] & 0xE0) == 0xE0):
+        return "mp3"
+    return None
+
+
+_EXTENSION_TO_FORMAT = {
+    ".wav": "wav",
+    ".aif": "aiff",
+    ".aiff": "aiff",
+    ".mp3": "mp3",
+    ".m4a": "mp4",
+    ".flac": "flac",
+}
+
+
 def extract(path: Path) -> ExtractedMetadata:
-    ext = path.suffix.lower()
-    if ext == ".wav":
+    fmt = _sniff_format(path) or _EXTENSION_TO_FORMAT.get(path.suffix.lower())
+    if fmt == "wav":
         return _extract_wav(path)
-    if ext in _AIFF_EXTENSIONS:
+    if fmt == "aiff":
         return _extract_aiff(path)
-    if ext in _COMPRESSED_EXTENSIONS:
+    if fmt in ("mp3", "flac", "mp4"):
         return _extract_compressed(path)
-    raise UnsupportedFormatError(ext)
+    raise UnsupportedFormatError(path.suffix.lower())
 
 
 def _with_filename_fallback(path: Path, bpm, bpm_source, key, key_source):

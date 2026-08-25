@@ -38,18 +38,29 @@ def undo_scan_run(conn: sqlite3.Connection, scan_run_id: int) -> UndoReport:
 
     entries = [e for e in read_manifest(Path(manifest_path)) if e.success]
     report = UndoReport(scan_run_id=scan_run_id)
+    reversed_paths: set[str] = set()
 
     for entry in reversed(entries):
         try:
             _undo_entry(entry)
             report.reversed_count += 1
+            if entry.action in ("move", "symlink"):
+                reversed_paths.add(entry.dest)
         except Exception as exc:  # noqa: BLE001 -- one bad entry shouldn't abort the rest
             report.skipped.append((entry, str(exc)))
 
-    # These rows no longer reflect reality once files are back where they
-    # came from.
-    conn.execute("DELETE FROM samples WHERE scan_run_id = ?", (scan_run_id,))
-    conn.commit()
+    # Only drop rows whose move/symlink was actually, successfully reversed.
+    # If reversing one entry failed (e.g. the target was already moved out
+    # from under us), that file is still really sitting in the library, and
+    # unconditionally deleting by scan_run_id alone would silently make it
+    # vanish from the database while it's still physically there.
+    if reversed_paths:
+        placeholders = ",".join("?" for _ in reversed_paths)
+        conn.execute(
+            f"DELETE FROM samples WHERE scan_run_id = ? AND current_path IN ({placeholders})",
+            (scan_run_id, *reversed_paths),
+        )
+        conn.commit()
 
     return report
 
@@ -64,11 +75,25 @@ def _undo_entry(entry: ManifestEntry) -> None:
     if entry.action == "move":
         dest = Path(entry.dest)
         original_source = Path(entry.sample_source_path)
-        if original_source.is_symlink():
+        had_stub = original_source.is_symlink()
+        if had_stub:
+            # Must remove the stub before moving dest back: it currently
+            # symlinks *at* dest, so leaving it in place would make src and
+            # dst the same underlying file as far as shutil.move/copyfile is
+            # concerned (SameFileError on the cross-volume copy fallback).
             original_source.unlink()
         if dest.exists():
             original_source.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(dest), str(original_source))
+            try:
+                shutil.move(str(dest), str(original_source))
+            except Exception:
+                # Best-effort: don't leave the original location completely
+                # empty (no stub, no file) just because the restore failed --
+                # put the stub back so the file is still reachable from
+                # there, then let the failure propagate and get reported.
+                if had_stub and not original_source.exists():
+                    original_source.symlink_to(dest)
+                raise
         return
 
     if entry.action == "write_tempo_metadata":

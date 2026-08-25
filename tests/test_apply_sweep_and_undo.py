@@ -149,3 +149,47 @@ def test_undo_restores_previously_missing_acid_chunk_to_absent(tmp_path: Path):
     restored = scan_dir / "Track_90bpm.wav"
     chunks = riff_chunks.read_chunks(restored)
     assert riff_chunks.read_acid(chunks) is None
+
+
+def test_undo_only_removes_db_rows_for_entries_actually_reversed(tmp_path: Path):
+    """If reversing one file's move fails partway through an undo, that
+    file is still really sitting in the library -- its samples row must
+    NOT be deleted just because it shares a scan_run_id with files that
+    *were* successfully reversed.
+    """
+    import shutil as shutil_module
+    from unittest.mock import patch
+
+    scan_dir = tmp_path / "scan"
+    scan_dir.mkdir(parents=True)
+    write_minimal_wav(scan_dir / "Alpha.wav")
+    write_minimal_wav(scan_dir / "Beta.wav")
+
+    settings = _make_settings(tmp_path)
+    taxonomy_rules = load_taxonomy(TAXONOMY_PATH)
+
+    real_move = shutil_module.move
+
+    def flaky_move(src, dst, *args, **kwargs):
+        if "Alpha" in str(dst):
+            raise OSError("simulated: could not restore Alpha")
+        return real_move(src, dst, *args, **kwargs)
+
+    with repository.open_db(settings.db_path) as conn:
+        report = run_apply_sweep(settings, taxonomy_rules, conn)
+        assert report.errors == []
+
+        with patch("sample_librarian.undo.shutil.move", side_effect=flaky_move):
+            undo_report = undo_scan_run(conn, report.scan_run_id)
+
+        assert len(undo_report.skipped) == 1
+        assert "Alpha" in str(undo_report.skipped[0][0].dest)
+
+        remaining = conn.execute("SELECT cleaned_filename FROM samples").fetchall()
+        assert {r["cleaned_filename"] for r in remaining} == {"Alpha.wav"}
+        assert (settings.unsorted_dir / "Alpha.wav").exists()  # still there, correctly tracked
+        # best-effort: the stub got put back rather than leaving the original
+        # location with neither a stub nor the restored file
+        assert (scan_dir / "Alpha.wav").is_symlink()
+        assert not (settings.unsorted_dir / "Beta.wav").exists()  # successfully restored
+        assert (scan_dir / "Beta.wav").exists()

@@ -159,13 +159,15 @@ def upsert_sample(conn: sqlite3.Connection, record: SampleRecord, scan_run_id: i
     )
     conn.commit()
 
-    sample_id = cur.lastrowid
-    if sample_id == 0:
-        # ON CONFLICT UPDATE path: lastrowid isn't the updated row, look it up.
-        row = conn.execute(
-            "SELECT id FROM samples WHERE current_path = ?", (record.current_path,)
-        ).fetchone()
-        sample_id = row["id"]
+    # cur.lastrowid is unreliable here: on the ON CONFLICT DO UPDATE path (no
+    # row actually inserted), SQLite leaves it holding whatever this
+    # connection's *last real insert* rowid was, not 0 and not this row's id.
+    # Always look the row up explicitly instead of trying to infer insert-vs-
+    # update from it.
+    row = conn.execute(
+        "SELECT id FROM samples WHERE current_path = ?", (record.current_path,)
+    ).fetchone()
+    sample_id = row["id"]
 
     _replace_tags(conn, sample_id, record.tags)
     return sample_id

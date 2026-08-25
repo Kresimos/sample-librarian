@@ -19,5 +19,6 @@ def build_minimal_wav(
 
 
 def write_minimal_wav(path: Path, **kwargs) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(build_minimal_wav(**kwargs))
     return path

@@ -14,11 +14,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from sample_librarian.audio import metadata_extractor
+from sample_librarian.audio import compressed_tags, metadata_extractor, riff_chunks
 from sample_librarian.classify.classifier import TypeRule, classify
 from sample_librarian.config import Settings
 from sample_librarian.naming.cleaner import clean_filename, make_unique
+from sample_librarian.db.repository import now_iso
+from sample_librarian.organize.manifest import ManifestEntry, ManifestWriter
+from sample_librarian.organize.mover import MoveError, move_orphan_file
+from sample_librarian.organize.symlinker import SymlinkError, symlink_vendor_file
 from sample_librarian.scanner.bucket_classifier import classify_bucket
+
+_NO_WRITE_BACK_EXTENSIONS = {".aif", ".aiff"}  # no AIFF chunk writer yet, see project plan
 
 
 @dataclass(frozen=True)
@@ -64,7 +70,11 @@ def plan_file(
         cleaned_filename = f"{unique_stem}{path.suffix.lower()}"
         target_path = settings.unsorted_dir / cleaned_filename
 
-    would_write_tempo = decision.bucket == "orphan" and metadata.bpm is not None
+    would_write_tempo = (
+        decision.bucket == "orphan"
+        and metadata.bpm is not None
+        and path.suffix.lower() not in _NO_WRITE_BACK_EXTENSIONS
+    )
 
     return PlannedAction(
         source_path=path,
@@ -85,3 +95,115 @@ def plan_file(
         file_size_bytes=path.stat().st_size,
         would_write_tempo_metadata=would_write_tempo,
     )
+
+
+@dataclass(frozen=True)
+class ExecutionOutcome:
+    success: bool
+    error: str | None
+    wrote_tempo_metadata: bool
+
+
+def execute_action(
+    action: PlannedAction, manifest: ManifestWriter, *, leave_stub_on_move: bool = True
+) -> ExecutionOutcome:
+    """Perform the real move/symlink (and tempo write-back for orphan files)
+    described by a previously-planned action, recording every step to the
+    manifest as it happens. leave_stub_on_move=False is used by inbox_rescan,
+    see move_orphan_file for why.
+    """
+    try:
+        if action.bucket == "vendor":
+            symlink_vendor_file(action.source_path, action.target_path)
+            manifest.record(
+                ManifestEntry(
+                    action="symlink",
+                    source=str(action.source_path),
+                    dest=str(action.target_path),
+                    sample_source_path=str(action.source_path),
+                    timestamp=now_iso(),
+                    success=True,
+                )
+            )
+            return ExecutionOutcome(success=True, error=None, wrote_tempo_metadata=False)
+
+        move_orphan_file(action.source_path, action.target_path, leave_stub=leave_stub_on_move)
+        manifest.record(
+            ManifestEntry(
+                action="move",
+                source=str(action.source_path),
+                dest=str(action.target_path),
+                sample_source_path=str(action.source_path),
+                timestamp=now_iso(),
+                success=True,
+            )
+        )
+
+        wrote_tempo = False
+        if action.would_write_tempo_metadata:
+            previous_state = _read_previous_tempo_state(action.target_path)
+            _write_tempo_metadata(action.target_path, action.bpm)
+            wrote_tempo = True
+            manifest.record(
+                ManifestEntry(
+                    action="write_tempo_metadata",
+                    source=str(action.target_path),
+                    dest=str(action.target_path),
+                    sample_source_path=str(action.source_path),
+                    timestamp=now_iso(),
+                    success=True,
+                    previous_state=previous_state,
+                )
+            )
+
+        return ExecutionOutcome(success=True, error=None, wrote_tempo_metadata=wrote_tempo)
+
+    except (MoveError, SymlinkError, Exception) as exc:  # noqa: BLE001 -- always record failures
+        manifest.record(
+            ManifestEntry(
+                action="symlink" if action.bucket == "vendor" else "move",
+                source=str(action.source_path),
+                dest=str(action.target_path),
+                sample_source_path=str(action.source_path),
+                timestamp=now_iso(),
+                success=False,
+                error=str(exc),
+            )
+        )
+        return ExecutionOutcome(success=False, error=str(exc), wrote_tempo_metadata=False)
+
+
+def _read_previous_tempo_state(target_path: Path) -> dict:
+    ext = target_path.suffix.lower()
+    if ext == ".wav":
+        acid = riff_chunks.read_acid(riff_chunks.read_chunks(target_path))
+        if acid is None:
+            return {"chunk_existed_before": False, "previous_tempo": None}
+        return {"chunk_existed_before": True, "previous_tempo": acid.tempo}
+    if ext in (".mp3", ".m4a", ".flac"):
+        previous_bpm, _key = compressed_tags.read_tempo_key(target_path)
+        return {"chunk_existed_before": previous_bpm is not None, "previous_tempo": previous_bpm}
+    return {"chunk_existed_before": False, "previous_tempo": None}
+
+
+def _write_tempo_metadata(target_path: Path, bpm: float) -> None:
+    ext = target_path.suffix.lower()
+    if ext == ".wav":
+        riff_chunks.merge_tempo(target_path, bpm)
+    elif ext in (".mp3", ".m4a", ".flac"):
+        compressed_tags.write_tempo(target_path, bpm)
+    # AIFF has no writer yet -- would_write_tempo_metadata is already False for it
+
+
+def undo_tempo_metadata(target_path: Path, previous_state: dict) -> None:
+    """Restore a file's tempo metadata to what it was before write_tempo_metadata
+    ran, using the previous_state captured in that manifest entry.
+    """
+    ext = target_path.suffix.lower()
+    if previous_state.get("chunk_existed_before"):
+        _write_tempo_metadata(target_path, previous_state["previous_tempo"])
+        return
+    if ext == ".wav":
+        riff_chunks.remove_acid(target_path)
+    elif ext in (".mp3", ".m4a", ".flac"):
+        compressed_tags.remove_tempo(target_path)

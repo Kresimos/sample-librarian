@@ -34,6 +34,33 @@ def read_tempo_key(path: Path) -> tuple[float | None, str | None]:
     raise UnsupportedFormatError(ext)
 
 
+def remove_tempo(path: Path) -> None:
+    """Strip the tempo tag entirely, e.g. to undo a write_tempo that added one
+    where none existed before. No-op if there's nothing to remove.
+    """
+    ext = path.suffix.lower()
+    if ext == ".mp3":
+        try:
+            tags = ID3(path)
+        except ID3NoHeaderError:
+            return
+        if "TBPM" in tags:
+            tags.delall("TBPM")
+            tags.save(path)
+    elif ext == ".flac":
+        audio = FLAC(path)
+        if _FLAC_BPM_KEY in audio:
+            del audio[_FLAC_BPM_KEY]
+            audio.save()
+    elif ext == ".m4a":
+        audio = MP4(path)
+        if "tmpo" in audio:
+            del audio["tmpo"]
+            audio.save()
+    else:
+        raise UnsupportedFormatError(ext)
+
+
 def write_tempo(path: Path, bpm: float) -> None:
     ext = path.suffix.lower()
     if ext == ".mp3":

@@ -205,6 +205,17 @@ def merge_tempo(path: Path, tempo: float) -> None:
     write_acid(path, acid)
 
 
+def remove_acid(path: Path) -> None:
+    """Strip the 'acid' chunk entirely, e.g. to undo a merge_tempo that created
+    one where none existed before. No-op if there's no acid chunk.
+    """
+    chunks = read_chunks(path)
+    if get_chunk(chunks, "acid") is None:
+        return
+    remaining = [c for c in chunks if c.chunk_id != "acid"]
+    _write_wav(path, remaining)
+
+
 def _write_wav(path: Path, chunks: list[RiffChunk]) -> None:
     body = bytearray()
     for chunk in chunks:

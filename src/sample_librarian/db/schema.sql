@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS samples (
     date_added                TEXT NOT NULL,
     date_modified_on_disk     TEXT,
     sample_type               TEXT,
+    loop_type                 TEXT CHECK (loop_type IN ('loop', 'one-shot')),
     classification_method     TEXT NOT NULL DEFAULT 'filename_heuristic'
                                CHECK (classification_method IN ('filename_heuristic', 'waveform_analysis', 'manual')),
     classification_confidence REAL,

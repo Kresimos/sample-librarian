@@ -3,6 +3,7 @@ import SwiftUI
 struct SearchFilterBar: View {
     @Binding var searchText: String
     @Binding var selectedType: String?
+    @Binding var selectedLoopType: String?
     @Binding var bpmMinText: String
     @Binding var bpmMaxText: String
     @Binding var keyText: String
@@ -16,6 +17,14 @@ struct SearchFilterBar: View {
                 TextField("Search filename, type, or tag...", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(.body, design: .monospaced))
+
+                Picker("Loop/One-shot", selection: $selectedLoopType) {
+                    Text("Loop or one-shot").tag(String?.none)
+                    Text("Loops").tag(String?.some("loop"))
+                    Text("One-shots").tag(String?.some("one-shot"))
+                }
+                .labelsHidden()
+                .frame(width: 130)
 
                 Picker("Type", selection: $selectedType) {
                     Text("All types").tag(String?.none)

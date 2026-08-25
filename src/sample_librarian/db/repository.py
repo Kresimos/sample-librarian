@@ -33,6 +33,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     schema_sql = _SCHEMA_PATH.read_text()
     conn.executescript(schema_sql)
     conn.commit()
+    _migrate(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """schema.sql's CREATE TABLE IF NOT EXISTS is a no-op against a table that
+    already exists with an older shape, so a genuinely new column needs an
+    explicit, idempotent ALTER TABLE here too.
+    """
+    existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(samples)")}
+    if "loop_type" not in existing_columns:
+        conn.execute("ALTER TABLE samples ADD COLUMN loop_type TEXT CHECK (loop_type IN ('loop', 'one-shot'))")
+    conn.commit()
 
 
 @contextmanager
@@ -57,6 +69,7 @@ class SampleRecord:
     file_ext: str
     file_size_bytes: int
     sample_type: str | None
+    loop_type: str | None
     classification_method: str
     bpm: float | None
     bpm_source: str | None
@@ -106,10 +119,10 @@ def upsert_sample(conn: sqlite3.Connection, record: SampleRecord, scan_run_id: i
         INSERT INTO samples (
             current_path, bucket, source_path, is_symlink_at_current, stub_left_at_source,
             vendor_name, original_filename, cleaned_filename, file_ext, file_size_bytes,
-            date_added, sample_type, classification_method, bpm, bpm_source,
+            date_added, sample_type, loop_type, classification_method, bpm, bpm_source,
             musical_key, key_source, acid_chunk_present, duration_seconds, sample_rate,
             channels, scan_run_id, last_seen_at, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
         ON CONFLICT(current_path) DO UPDATE SET
             bucket = excluded.bucket,
             source_path = excluded.source_path,
@@ -118,6 +131,7 @@ def upsert_sample(conn: sqlite3.Connection, record: SampleRecord, scan_run_id: i
             vendor_name = excluded.vendor_name,
             cleaned_filename = excluded.cleaned_filename,
             sample_type = excluded.sample_type,
+            loop_type = excluded.loop_type,
             classification_method = excluded.classification_method,
             bpm = excluded.bpm,
             bpm_source = excluded.bpm_source,
@@ -144,6 +158,7 @@ def upsert_sample(conn: sqlite3.Connection, record: SampleRecord, scan_run_id: i
             record.file_size_bytes,
             now_iso(),
             record.sample_type,
+            record.loop_type,
             record.classification_method,
             record.bpm,
             record.bpm_source,
@@ -190,6 +205,7 @@ def search_samples(
     *,
     text: str | None = None,
     sample_type: str | None = None,
+    loop_type: str | None = None,
     bpm_min: float | None = None,
     bpm_max: float | None = None,
     musical_key: str | None = None,
@@ -209,6 +225,9 @@ def search_samples(
     if sample_type:
         clauses.append("s.sample_type = ?")
         params.append(sample_type)
+    if loop_type:
+        clauses.append("s.loop_type = ?")
+        params.append(loop_type)
     if bpm_min is not None:
         clauses.append("s.bpm >= ?")
         params.append(bpm_min)
@@ -239,6 +258,14 @@ def count_by_bucket(conn: sqlite3.Connection) -> dict[str, int]:
 def count_by_type(conn: sqlite3.Connection) -> dict[str, int]:
     rows = conn.execute(
         "SELECT COALESCE(sample_type, '(unclassified)') AS t, COUNT(*) AS n "
+        "FROM samples GROUP BY t ORDER BY n DESC"
+    ).fetchall()
+    return {row["t"]: row["n"] for row in rows}
+
+
+def count_by_loop_type(conn: sqlite3.Connection) -> dict[str, int]:
+    rows = conn.execute(
+        "SELECT COALESCE(loop_type, '(unknown)') AS t, COUNT(*) AS n "
         "FROM samples GROUP BY t ORDER BY n DESC"
     ).fetchall()
     return {row["t"]: row["n"] for row in rows}

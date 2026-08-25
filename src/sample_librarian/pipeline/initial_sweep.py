@@ -149,6 +149,7 @@ def run_apply_sweep(
                 file_ext=path.suffix.lower(),
                 file_size_bytes=action.file_size_bytes,
                 sample_type=action.sample_type,
+                loop_type=action.loop_type,
                 classification_method="filename_heuristic",
                 bpm=action.bpm,
                 bpm_source=action.bpm_source,

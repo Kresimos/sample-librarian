@@ -7,7 +7,8 @@ public struct SampleRecord: Identifiable, Hashable, Sendable {
     public let currentPath: String
     public let bucket: String  // "vendor" | "orphan"
     public let cleanedFilename: String
-    public let sampleType: String?
+    public let sampleType: String?  // includes "song" for anything over the duration threshold
+    public let loopType: String?  // "loop" | "one-shot" | nil
     public let bpm: Double?
     public let musicalKey: String?
     public let durationSeconds: Double?
@@ -19,6 +20,7 @@ public struct SampleRecord: Identifiable, Hashable, Sendable {
         bucket: String,
         cleanedFilename: String,
         sampleType: String?,
+        loopType: String?,
         bpm: Double?,
         musicalKey: String?,
         durationSeconds: Double?,
@@ -29,6 +31,7 @@ public struct SampleRecord: Identifiable, Hashable, Sendable {
         self.bucket = bucket
         self.cleanedFilename = cleanedFilename
         self.sampleType = sampleType
+        self.loopType = loopType
         self.bpm = bpm
         self.musicalKey = musicalKey
         self.durationSeconds = durationSeconds

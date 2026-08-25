@@ -19,7 +19,7 @@ final class DatabaseTests: XCTestCase {
     func testSearchWithNoFiltersReturnsAllActive() throws {
         let db = try Database(path: dbURL)
         let results = try db.search()
-        XCTAssertEqual(results.count, 3)
+        XCTAssertEqual(results.count, 5)  // 6 rows minus the 'missing' one
     }
 
     func testSearchByFreeTextMatchesFilename() throws {
@@ -43,7 +43,7 @@ final class DatabaseTests: XCTestCase {
     func testSearchByBpmRange() throws {
         let db = try Database(path: dbURL)
         let results = try db.search(bpmMin: 100, bpmMax: 200)
-        XCTAssertEqual(Set(results.map(\.cleanedFilename)), ["Bright Hihat.wav"])
+        XCTAssertEqual(Set(results.map(\.cleanedFilename)), ["Bright Hihat.wav", "Break Groove.wav"])
     }
 
     func testSearchExcludesMissingStatus() throws {
@@ -52,10 +52,23 @@ final class DatabaseTests: XCTestCase {
         XCTAssertTrue(results.isEmpty)
     }
 
+    func testSearchByLoopType() throws {
+        let db = try Database(path: dbURL)
+        let results = try db.search(loopType: "loop")
+        XCTAssertEqual(Set(results.map(\.cleanedFilename)), ["Break Groove.wav"])
+    }
+
+    func testSongSampleTypeHasNoLoopType() throws {
+        let db = try Database(path: dbURL)
+        let results = try db.search(sampleType: "song")
+        XCTAssertEqual(results.count, 1)
+        XCTAssertNil(results[0].loopType)
+    }
+
     func testDistinctSampleTypes() throws {
         let db = try Database(path: dbURL)
         let types = try db.distinctSampleTypes()
-        XCTAssertEqual(types, ["hihat", "kick", "pad"])
+        XCTAssertEqual(types, ["breakbeat", "hihat", "kick", "pad", "song"])
     }
 
     func testResolvedFileURLFollowsSymlink() throws {
@@ -65,7 +78,7 @@ final class DatabaseTests: XCTestCase {
 
         let record = SampleRecord(
             id: 1, currentPath: realFile.path, bucket: "orphan", cleanedFilename: "x",
-            sampleType: nil, bpm: nil, musicalKey: nil, durationSeconds: nil, tags: []
+            sampleType: nil, loopType: nil, bpm: nil, musicalKey: nil, durationSeconds: nil, tags: []
         )
         XCTAssertEqual(record.resolvedFileURL.path, realFile.resolvingSymlinksInPath().path)
     }
@@ -82,18 +95,20 @@ final class DatabaseTests: XCTestCase {
         let schema = """
         CREATE TABLE samples (
             id INTEGER PRIMARY KEY, current_path TEXT, bucket TEXT,
-            cleaned_filename TEXT, sample_type TEXT, bpm REAL, musical_key TEXT,
+            cleaned_filename TEXT, sample_type TEXT, loop_type TEXT, bpm REAL, musical_key TEXT,
             duration_seconds REAL, status TEXT DEFAULT 'active'
         );
         CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
         CREATE TABLE sample_tags (sample_id INTEGER, tag_id INTEGER);
 
-        INSERT INTO samples (id, current_path, bucket, cleaned_filename, sample_type, bpm, musical_key, status)
+        INSERT INTO samples (id, current_path, bucket, cleaned_filename, sample_type, loop_type, bpm, musical_key, status)
         VALUES
-            (1, '/lib/unsorted/Deep Kick.wav', 'orphan', 'Deep Kick.wav', 'kick', 95, 'Amin', 'active'),
-            (2, '/lib/unsorted/Bright Hihat.wav', 'orphan', 'Bright Hihat.wav', 'hihat', 140, NULL, 'active'),
-            (3, '/lib/unsorted/Ambient Pad.wav', 'orphan', 'Ambient Pad.wav', 'pad', NULL, 'Cmaj', 'active'),
-            (4, '/lib/unsorted/Gone.wav', 'orphan', 'Gone.wav', 'kick', NULL, NULL, 'missing');
+            (1, '/lib/unsorted/Deep Kick.wav', 'orphan', 'Deep Kick.wav', 'kick', 'one-shot', 95, 'Amin', 'active'),
+            (2, '/lib/unsorted/Bright Hihat.wav', 'orphan', 'Bright Hihat.wav', 'hihat', 'one-shot', 140, NULL, 'active'),
+            (3, '/lib/unsorted/Ambient Pad.wav', 'orphan', 'Ambient Pad.wav', 'pad', NULL, NULL, 'Cmaj', 'active'),
+            (4, '/lib/unsorted/Gone.wav', 'orphan', 'Gone.wav', 'kick', 'one-shot', NULL, NULL, 'missing'),
+            (5, '/lib/unsorted/Break Groove.wav', 'orphan', 'Break Groove.wav', 'breakbeat', 'loop', 128, NULL, 'active'),
+            (6, '/lib/unsorted/Some Song.mp3', 'orphan', 'Some Song.mp3', 'song', NULL, NULL, NULL, 'active');
 
         INSERT INTO tags (id, name) VALUES (1, 'drum'), (2, 'one-shot'), (3, 'ambient');
         INSERT INTO sample_tags (sample_id, tag_id) VALUES (1, 1), (1, 2), (2, 1), (2, 2), (3, 3);

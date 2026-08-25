@@ -43,6 +43,7 @@ public final class Database {
     public func search(
         text: String? = nil,
         sampleType: String? = nil,
+        loopType: String? = nil,
         bpmMin: Double? = nil,
         bpmMax: Double? = nil,
         musicalKey: String? = nil
@@ -65,6 +66,10 @@ public final class Database {
             clauses.append("s.sample_type = ?")
             bindings.append(.text(sampleType))
         }
+        if let loopType, !loopType.isEmpty {
+            clauses.append("s.loop_type = ?")
+            bindings.append(.text(loopType))
+        }
         if let bpmMin {
             clauses.append("s.bpm >= ?")
             bindings.append(.double(bpmMin))
@@ -80,7 +85,7 @@ public final class Database {
 
         let sql = """
         SELECT s.id, s.current_path, s.bucket, s.cleaned_filename, s.sample_type,
-               s.bpm, s.musical_key, s.duration_seconds
+               s.loop_type, s.bpm, s.musical_key, s.duration_seconds
         FROM samples s
         WHERE \(clauses.joined(separator: " AND "))
         ORDER BY s.cleaned_filename
@@ -171,12 +176,14 @@ extension SampleRecord {
         let cleanedFilename = String(cString: sqlite3_column_text(statement, 3))
         let sampleType = sqlite3_column_type(statement, 4) == SQLITE_NULL
             ? nil : String(cString: sqlite3_column_text(statement, 4))
-        let bpm = sqlite3_column_type(statement, 5) == SQLITE_NULL
-            ? nil : sqlite3_column_double(statement, 5)
-        let musicalKey = sqlite3_column_type(statement, 6) == SQLITE_NULL
-            ? nil : String(cString: sqlite3_column_text(statement, 6))
-        let duration = sqlite3_column_type(statement, 7) == SQLITE_NULL
-            ? nil : sqlite3_column_double(statement, 7)
+        let loopType = sqlite3_column_type(statement, 5) == SQLITE_NULL
+            ? nil : String(cString: sqlite3_column_text(statement, 5))
+        let bpm = sqlite3_column_type(statement, 6) == SQLITE_NULL
+            ? nil : sqlite3_column_double(statement, 6)
+        let musicalKey = sqlite3_column_type(statement, 7) == SQLITE_NULL
+            ? nil : String(cString: sqlite3_column_text(statement, 7))
+        let duration = sqlite3_column_type(statement, 8) == SQLITE_NULL
+            ? nil : sqlite3_column_double(statement, 8)
 
         self.init(
             id: id,
@@ -184,6 +191,7 @@ extension SampleRecord {
             bucket: bucket,
             cleanedFilename: cleanedFilename,
             sampleType: sampleType,
+            loopType: loopType,
             bpm: bpm,
             musicalKey: musicalKey,
             durationSeconds: duration,

@@ -9,6 +9,9 @@ final class BrowserViewModel: ObservableObject {
     @Published var selectedType: String? = nil {
         didSet { reload() }
     }
+    @Published var selectedLoopType: String? = nil {
+        didSet { reload() }
+    }
     @Published var bpmMinText: String = "" {
         didSet { reload() }
     }
@@ -43,6 +46,7 @@ final class BrowserViewModel: ObservableObject {
             samples = try database.search(
                 text: searchText.isEmpty ? nil : searchText,
                 sampleType: selectedType,
+                loopType: selectedLoopType,
                 bpmMin: Double(bpmMinText.trimmingCharacters(in: .whitespaces)),
                 bpmMax: Double(bpmMaxText.trimmingCharacters(in: .whitespaces)),
                 musicalKey: keyText.trimmingCharacters(in: .whitespaces).isEmpty ? nil : keyText
@@ -83,6 +87,7 @@ struct BrowserView: View {
             SearchFilterBar(
                 searchText: $viewModel.searchText,
                 selectedType: $viewModel.selectedType,
+                selectedLoopType: $viewModel.selectedLoopType,
                 bpmMinText: $viewModel.bpmMinText,
                 bpmMaxText: $viewModel.bpmMaxText,
                 keyText: $viewModel.keyText,

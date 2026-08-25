@@ -1,4 +1,5 @@
-"""Filename/folder-path keyword classification against config/taxonomy.yaml.
+"""Filename/folder-path keyword classification against config/taxonomy.yaml,
+plus duration-based song detection and loop-vs-one-shot labeling.
 
 v1 only -- audio-content/waveform analysis is deliberately deferred (see
 samples.classification_method in schema.sql, which leaves room for it later
@@ -13,6 +14,23 @@ from pathlib import Path
 
 import yaml
 
+# A full song download runs a couple of minutes at minimum; nothing that's
+# actually a sample/loop/one-shot realistically does. Files longer than this
+# get sample_type="song" instead of going through keyword classification at
+# all (a song called "Kick Drum Solo" shouldn't get tagged as a kick sample).
+DEFAULT_SONG_DURATION_THRESHOLD_SECONDS = 90.0
+
+# Anything this short or shorter is almost certainly a single hit, not a loop.
+DEFAULT_ONE_SHOT_MAX_DURATION_SECONDS = 3.0
+
+# Sample types that lean strongly one way when duration is unknown and no
+# filename keyword settled it.
+_ONE_SHOT_LEANING_TYPES = frozenset({"kick", "snare", "clap", "hihat", "tom", "percussion"})
+_LOOP_LEANING_TYPES = frozenset({"breakbeat"})
+
+_LOOP_KEYWORD = re.compile(r"\bloops?\b")
+_ONE_SHOT_KEYWORD = re.compile(r"\b(?:one ?shots?|1shots?)\b")
+
 
 @dataclass(frozen=True)
 class TypeRule:
@@ -25,6 +43,7 @@ class TypeRule:
 class ClassificationResult:
     sample_type: str | None
     tags: tuple[str, ...]
+    loop_type: str | None = None  # 'loop' | 'one-shot' | None (indeterminate, or n/a for a song)
 
 
 def load_taxonomy(taxonomy_path: Path) -> list[TypeRule]:
@@ -59,11 +78,55 @@ def _compile_keyword(keyword: str) -> re.Pattern:
     return re.compile(rf"\b{escaped}s?\b")
 
 
-def classify(filename: str, parent_folder_names: list[str], rules: list[TypeRule]) -> ClassificationResult:
+def classify(
+    filename: str,
+    parent_folder_names: list[str],
+    rules: list[TypeRule],
+    *,
+    duration_seconds: float | None = None,
+    bpm: float | None = None,
+    song_duration_threshold_seconds: float = DEFAULT_SONG_DURATION_THRESHOLD_SECONDS,
+) -> ClassificationResult:
     haystack = _normalize(" ".join([filename, *parent_folder_names]))
 
+    if duration_seconds is not None and duration_seconds > song_duration_threshold_seconds:
+        # Long enough that it's a full track, not a sample -- keyword
+        # classification and loop/one-shot labeling don't apply to it.
+        return ClassificationResult(sample_type="song", tags=(), loop_type=None)
+
+    sample_type: str | None = None
+    tags: tuple[str, ...] = ()
     for rule in rules:
         if any(p.search(haystack) for p in rule.patterns):
-            return ClassificationResult(sample_type=rule.sample_type, tags=rule.tags)
+            sample_type, tags = rule.sample_type, rule.tags
+            break
 
-    return ClassificationResult(sample_type=None, tags=())
+    loop_type = _classify_loop_type(
+        haystack, duration_seconds=duration_seconds, sample_type=sample_type
+    )
+
+    return ClassificationResult(sample_type=sample_type, tags=tags, loop_type=loop_type)
+
+
+def _classify_loop_type(
+    haystack: str, *, duration_seconds: float | None, sample_type: str | None
+) -> str | None:
+    # An explicit filename keyword always wins over inference.
+    if _ONE_SHOT_KEYWORD.search(haystack):
+        return "one-shot"
+    if _LOOP_KEYWORD.search(haystack):
+        return "loop"
+
+    if duration_seconds is not None:
+        if duration_seconds <= DEFAULT_ONE_SHOT_MAX_DURATION_SECONDS:
+            return "one-shot"
+        # Longer than a one-shot and (by the time we get here) already known
+        # to be shorter than the song threshold -- almost certainly a loop.
+        return "loop"
+
+    # No duration available at all: fall back to what the sample type usually is.
+    if sample_type in _LOOP_LEANING_TYPES:
+        return "loop"
+    if sample_type in _ONE_SHOT_LEANING_TYPES:
+        return "one-shot"
+    return None

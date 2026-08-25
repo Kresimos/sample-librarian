@@ -4,16 +4,24 @@ import SampleLibrarianCore
 struct SampleRowView: View {
     let sample: SampleRecord
 
+    private var isSong: Bool { sample.sampleType == "song" }
+
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(sample.cleanedFilename)
                 .font(.system(.body, design: .monospaced))
                 .lineLimit(1)
+                .foregroundStyle(isSong ? .secondary : .primary)
+                .italic(isSong)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(sample.sampleType ?? "-")
                 .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(isSong ? Color.orange : .secondary)
+                .frame(width: 80, alignment: .leading)
+            Text(sample.loopType ?? "-")
+                .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .frame(width: 90, alignment: .leading)
+                .frame(width: 66, alignment: .leading)
             Text(bpmLabel)
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)

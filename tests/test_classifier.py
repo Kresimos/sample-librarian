@@ -105,6 +105,22 @@ def test_loop_type_none_when_no_signal_available(rules):
     assert result.loop_type is None
 
 
+def test_loop_type_drum_one_shot_with_long_sub_tail_still_one_shot(rules):
+    # Regression: a real file found in ~/Downloads, "Kick_3_Sub_RedLine.wav",
+    # is 5.9s (kick layered with a sub-bass tail) and was misclassified as a
+    # loop under a flat 3s cutoff.
+    result = classify("Kick_3_Sub_RedLine.wav", [], rules, duration_seconds=5.887)
+    assert result.sample_type == "kick"
+    assert result.loop_type == "one-shot"
+
+
+def test_loop_type_non_drum_type_keeps_short_threshold(rules):
+    # The generous threshold is specifically for drum-type one-shots; a
+    # pad/synth/etc. at 5.9s with no other signal should still read as a loop.
+    result = classify("Ambient_Texture.wav", [], rules, duration_seconds=5.887)
+    assert result.loop_type == "loop"
+
+
 def test_loop_type_from_parent_folder_name(rules):
     # Common commercial sample pack layout: "<Pack Name>/Loops/foo.wav" and
     # "<Pack Name>/One Shots/foo.wav" -- the filename alone often carries no

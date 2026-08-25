@@ -23,6 +23,12 @@ DEFAULT_SONG_DURATION_THRESHOLD_SECONDS = 90.0
 # Anything this short or shorter is almost certainly a single hit, not a loop.
 DEFAULT_ONE_SHOT_MAX_DURATION_SECONDS = 3.0
 
+# Drum-type one-shots specifically can legitimately run longer than that --
+# a kick layered with a sub-bass tail, or a hihat/percussion hit with a long
+# decay, commonly stretches past 3s and is still just one hit, not a loop.
+# Found empirically: a real "Kick_3_Sub_RedLine.wav" in the wild is 5.9s.
+ONE_SHOT_LEANING_MAX_DURATION_SECONDS = 8.0
+
 # Sample types that lean strongly one way when duration is unknown and no
 # filename keyword settled it.
 _ONE_SHOT_LEANING_TYPES = frozenset({"kick", "snare", "clap", "hihat", "tom", "percussion"})
@@ -118,7 +124,12 @@ def _classify_loop_type(
         return "loop"
 
     if duration_seconds is not None:
-        if duration_seconds <= DEFAULT_ONE_SHOT_MAX_DURATION_SECONDS:
+        threshold = (
+            ONE_SHOT_LEANING_MAX_DURATION_SECONDS
+            if sample_type in _ONE_SHOT_LEANING_TYPES
+            else DEFAULT_ONE_SHOT_MAX_DURATION_SECONDS
+        )
+        if duration_seconds <= threshold:
             return "one-shot"
         # Longer than a one-shot and (by the time we get here) already known
         # to be shorter than the song threshold -- almost certainly a loop.

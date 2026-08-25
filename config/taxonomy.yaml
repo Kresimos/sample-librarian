@@ -241,76 +241,59 @@ types:
     keywords: [glitch, glitches, stutter, error]
     tags: [fx]
 
-  # --- Genre / style (tags only -- no instrument implied) -----------------
+  # --- Genre / style -- the keyword itself (e.g. "house") is the tag; no
+  #     extra grouping tag, "genre" as a literal tag value isn't useful ------
 
   house:
     keywords: [house]
-    tags: [genre]
 
   techno:
     keywords: [techno]
-    tags: [genre]
 
   trap:
     keywords: [trap]
-    tags: [genre]
 
   dnb:
     keywords: [dnb, "drum and bass", "drum n bass", jungle]
-    tags: [genre]
 
   garage:
     keywords: [garage, "uk garage", ukg]
-    tags: [genre]
 
   lofi:
     keywords: [lofi, "lo-fi", "lo fi"]
-    tags: [genre]
 
   dubstep:
     keywords: [dubstep]
-    tags: [genre]
 
   trance:
     keywords: [trance]
-    tags: [genre]
 
   disco:
     keywords: [disco]
-    tags: [genre]
 
   funk:
     keywords: [funk, funky]
-    tags: [genre]
 
   hiphop:
     keywords: ["hip hop", "hip-hop", hiphop, rap]
-    tags: [genre]
 
   cinematic:
     keywords: [cinematic, trailer, epic]
-    tags: [genre]
 
   rock:
     keywords: [rock]
-    tags: [genre]
 
   metal:
     keywords: [metal]
-    tags: [genre]
 
   pop:
     keywords: [pop]
-    tags: [genre]
 
   reggae:
     keywords: [reggae]
-    tags: [genre]
 
   afrobeat:
     keywords: [afrobeat, afrobeats]
-    tags: [genre]
 
   latin:
     keywords: [latin, reggaeton]
-    tags: [genre]

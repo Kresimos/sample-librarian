@@ -218,6 +218,42 @@ def undo_cmd(config_path: Path, scan_run_id: int, skip_confirm: bool) -> None:
             click.echo(f"    {entry.action} {entry.dest}: {error}", err=True)
 
 
+@main.command("search")
+@_config_option
+@click.option("--text", default=None, help="Free text against filename, type, or tags.")
+@click.option("--type", "sample_type", default=None, help="Exact sample_type, e.g. kick.")
+@click.option("--bpm-min", type=float, default=None)
+@click.option("--bpm-max", type=float, default=None)
+@click.option("--key", "musical_key", default=None, help="Exact musical key, e.g. C#min.")
+def search_cmd(
+    config_path: Path,
+    text: str | None,
+    sample_type: str | None,
+    bpm_min: float | None,
+    bpm_max: float | None,
+    musical_key: str | None,
+) -> None:
+    """Quick terminal search against the library, same filters the Stage 2
+    app uses. Mostly useful for debugging without opening the GUI.
+    """
+    try:
+        settings = load_settings(config_path)
+    except ConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    with repository.open_db(settings.db_path) as conn:
+        rows = repository.search_samples(
+            conn, text=text, sample_type=sample_type, bpm_min=bpm_min, bpm_max=bpm_max, musical_key=musical_key
+        )
+
+    click.echo(f"{len(rows)} result(s)")
+    for row in rows:
+        bpm = f"{row['bpm']:.0f}bpm" if row["bpm"] is not None else "-"
+        key = row["musical_key"] or "-"
+        click.echo(f"  [{row['bucket']:6}] {row['cleaned_filename']:40} type={row['sample_type'] or '-':10} bpm={bpm:>6} key={key}")
+        click.echo(f"           {row['current_path']}")
+
+
 @main.command("stats")
 @_config_option
 def stats_cmd(config_path: Path) -> None:

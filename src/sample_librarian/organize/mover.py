@@ -34,7 +34,7 @@ def move_orphan_file(source: Path, dest: Path, *, leave_stub: bool = True) -> No
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     source_size = source.stat().st_size
-    same_volume = source.stat().st_dev == _existing_ancestor(dest.parent).stat().st_dev
+    same_volume = source.stat().st_dev == dest.parent.stat().st_dev
 
     if same_volume:
         try:
@@ -60,11 +60,3 @@ def _copy_verify_delete(source: Path, dest: Path, expected_size: int) -> None:
             f"expected {expected_size} bytes, got {actual_size}"
         )
     source.unlink()
-
-
-def _existing_ancestor(path: Path) -> Path:
-    """dest.parent may not exist yet at the point we need its device id."""
-    for candidate in (path, *path.parents):
-        if candidate.exists():
-            return candidate
-    raise MoveError(f"no existing ancestor found for {path}")

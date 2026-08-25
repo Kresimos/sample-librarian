@@ -99,3 +99,24 @@ def test_scan_apply_requires_confirmation_without_yes(tmp_path: Path):
     assert result.exit_code != 0  # aborted
     assert (scan_dir / "Track.wav").exists()
     assert not (scan_dir / "Track.wav").is_symlink()
+
+
+def test_search_cli_command(tmp_path: Path):
+    runner = CliRunner()
+    scan_dir = tmp_path / "scan"
+    write_minimal_wav(scan_dir / "Deep_Kick_95bpm_Amin.wav")
+    write_minimal_wav(scan_dir / "Bright_HiHat_140bpm.wav")
+    config_path = _write_config(tmp_path)
+
+    runner.invoke(main, ["init", "--config", str(config_path)])
+    runner.invoke(main, ["scan", "--config", str(config_path), "--apply", "--yes"])
+
+    result = runner.invoke(main, ["search", "--config", str(config_path), "--text", "kick"])
+    assert result.exit_code == 0, result.output
+    assert "1 result(s)" in result.output
+    assert "Deep Kick.wav" in result.output
+
+    result = runner.invoke(main, ["search", "--config", str(config_path), "--bpm-min", "100"])
+    assert result.exit_code == 0, result.output
+    assert "Bright Hihat.wav" in result.output
+    assert "Deep Kick.wav" not in result.output

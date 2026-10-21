@@ -46,6 +46,10 @@ def test_dry_run_sweep_classifies_vendor_and_orphan_buckets(tmp_path: Path):
         assert vendor_action.target_path == settings.vendor_dir / "VendorLib" / "kick.wav"
         # vendor files are mirrored verbatim, never renamed
         assert vendor_action.cleaned_filename == "kick.wav"
+        # vendor_name is mirrored into the tag system too (slugified), not
+        # just left as a separate DB column.
+        assert "vendorlib" in vendor_action.tags
+        assert "kick" in vendor_action.tags  # normal taxonomy tags still present too
 
         orphan_action = by_source[orphan_file]
         assert orphan_action.bucket == "orphan"
@@ -82,6 +86,35 @@ def test_dry_run_sweep_handles_collisions_in_orphan_bucket(tmp_path: Path):
 
     target_names = sorted(a.cleaned_filename for a in report.actions)
     assert target_names == ["Kick Heavy 2.wav", "Kick Heavy.wav"]
+
+
+def test_dry_run_sweep_ignores_excluded_paths(tmp_path: Path):
+    # A subfolder with real, non-sample content living right next to real
+    # sample content under the same scan_root (e.g. Apple Music's own
+    # library folder inside ~/Music) must never be walked at all -- not
+    # symlinked (that's vendor_roots), not moved, not even looked at.
+    scan_dir = tmp_path / "scan"
+    excluded_dir = scan_dir / "NotSamples"
+    excluded_dir.mkdir(parents=True)
+
+    real_sample = write_minimal_wav(scan_dir / "Kick.wav")
+    write_minimal_wav(excluded_dir / "My Song.wav")
+
+    settings = Settings(
+        library_root=tmp_path / "library",
+        scan_roots=(scan_dir,),
+        vendor_roots=(),
+        audio_extensions=(".wav",),
+        excluded_paths=(excluded_dir,),
+    )
+    taxonomy_rules = load_taxonomy(TAXONOMY_PATH)
+
+    with repository.open_db(settings.db_path) as conn:
+        report = run_dry_run_sweep(settings, taxonomy_rules, conn)
+
+    scanned_sources = {a.source_path for a in report.actions}
+    assert real_sample in scanned_sources
+    assert not any(p.is_relative_to(excluded_dir) for p in scanned_sources)
 
 
 def test_dry_run_sweep_ignores_symlinks_and_excludes_library_root(tmp_path: Path):

@@ -29,10 +29,14 @@ def _seed_existing_unsorted_stems(unsorted_dir: Path) -> set[str]:
     unsorted/ from a previous run, not just duplicates within this run --
     otherwise a repeated inbox_rescan could silently overwrite/collide with
     something the first sweep already put there.
+
+    Lowercased -- see make_unique's docstring for why (macOS's default
+    filesystem is case-insensitive, so "Tom1.wav" and "TOM1.wav" are the
+    same real path even though they're different Python strings).
     """
     if not unsorted_dir.exists():
         return set()
-    return {p.stem for p in unsorted_dir.iterdir() if p.is_file() or p.is_symlink()}
+    return {p.stem.lower() for p in unsorted_dir.iterdir() if p.is_file() or p.is_symlink()}
 
 
 @dataclass
@@ -64,7 +68,9 @@ def run_dry_run_sweep(
     existing_unsorted_stems = _seed_existing_unsorted_stems(settings.unsorted_dir)
 
     for path in iter_audio_files(
-        settings.scan_roots, settings.audio_extensions, exclude_root=settings.library_root
+        settings.scan_roots,
+        settings.audio_extensions,
+        exclude_roots=(settings.library_root, *settings.excluded_paths),
     ):
         try:
             action = plan_file(
@@ -95,6 +101,7 @@ def run_apply_sweep(
     run_type: str = "initial_sweep",
     scan_roots_override: tuple[Path, ...] | None = None,
     leave_stub_on_move: bool = True,
+    min_mtime: float | None = None,
 ) -> SweepReport:
     """Real run: actually moves/symlinks files and writes tempo metadata back,
     recording every action to a manifest and the samples table as it goes.
@@ -102,13 +109,21 @@ def run_apply_sweep(
     Only ever call this after a dry run has been reviewed -- see the project
     plan's mandatory gate before any real --apply run. `run_type`/
     `scan_roots_override` let inbox_rescan reuse this exact same logic scoped
-    to just settings.inbox_dir instead of the full scan_roots list.
+    to just settings.inbox_dir instead of the full scan_roots list. `min_mtime`
+    is inbox_rescan's incremental-rescan cutoff (see walker.iter_audio_files)
+    -- always None for a full sweep, which must always see everything.
     """
     scan_roots = scan_roots_override if scan_roots_override is not None else settings.scan_roots
-    # exclude_root guards a general disk sweep against re-ingesting the
-    # library's own content; inbox/vendor rescans deliberately scan *inside*
-    # library_root, so that guard would wrongly exclude everything there.
-    exclude_root = settings.library_root if scan_roots_override is None else None
+    # exclude_roots guards a general disk sweep against re-ingesting the
+    # library's own content, and against non-sample subtrees like
+    # settings.excluded_paths; inbox/vendor rescans deliberately scan *inside*
+    # library_root, so the library_root guard would wrongly exclude
+    # everything there (excluded_paths still applies either way).
+    exclude_roots = (
+        (settings.library_root, *settings.excluded_paths)
+        if scan_roots_override is None
+        else settings.excluded_paths
+    )
     scan_run_id = repository.start_scan_run(conn, run_type, dry_run=False)
     manifest_path = manifest_path_for_run(settings.logs_dir, scan_run_id, run_type)
     report = SweepReport(scan_run_id=scan_run_id)
@@ -117,7 +132,9 @@ def run_apply_sweep(
     files_symlinked = 0
 
     with ManifestWriter(manifest_path) as manifest:
-        for path in iter_audio_files(scan_roots, settings.audio_extensions, exclude_root=exclude_root):
+        for path in iter_audio_files(
+            scan_roots, settings.audio_extensions, exclude_roots=exclude_roots, min_mtime=min_mtime
+        ):
             try:
                 action = plan_file(
                     path, settings, taxonomy_rules, existing_unsorted_stems=existing_unsorted_stems

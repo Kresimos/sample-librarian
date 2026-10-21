@@ -50,6 +50,125 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE samples DROP COLUMN sample_type")
     if "loop_type" in existing_columns:
         conn.execute("ALTER TABLE samples DROP COLUMN loop_type")
+
+    # rating (Stage 2 app, -2..+2) was added after some DBs already existed.
+    if "rating" not in existing_columns:
+        conn.execute("ALTER TABLE samples ADD COLUMN rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN -2 AND 2)")
+    # Always ensure the index exists (idempotent) -- covers both a DB that
+    # just got the column added above and a fresh DB that already had it
+    # from schema.sql's CREATE TABLE.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_samples_rating ON samples(rating)")
+
+    # Covers the Stage 2 browser's default sort (rating desc, date_added desc,
+    # scoped to status='active'). Without it every search sorts its whole match
+    # set through a temp b-tree, which also means the browser's paged LIMIT
+    # can't stop early. Ascending serves both directions -- SQLite scans an
+    # index backwards, and both columns always share the same direction (see
+    # SortOption.orderByClause in the Swift app).
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_samples_browse_rating "
+        "ON samples(status, rating, date_added)"
+    )
+
+    # bpm_source/key_source's CHECK constraint gained 'embedded_beatgrid'
+    # (tempo/key derived from an authored beat grid -- ACID num_beats, or an
+    # Apple Loops .caf/.aif descriptor) after some DBs already existed. Same
+    # deal as scan_runs below: SQLite can't ALTER a CHECK in place, so rebuild
+    # the table when the old constraint is detected. foreign_keys must be OFF
+    # for the DROP (sample_tags cascades off samples.id); ids are preserved by
+    # INSERT ... SELECT *, so every sample_tags/scan_run_id reference stays valid.
+    samples_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'samples'"
+    ).fetchone()
+    if samples_sql is not None and "embedded_beatgrid" not in samples_sql["sql"]:
+        conn.commit()  # PRAGMA foreign_keys is a no-op inside a transaction
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.executescript(
+            """
+            CREATE TABLE samples_new (
+                id                        INTEGER PRIMARY KEY,
+                current_path              TEXT UNIQUE NOT NULL,
+                bucket                    TEXT NOT NULL CHECK (bucket IN ('vendor', 'orphan')),
+                source_path               TEXT NOT NULL,
+                is_symlink_at_current     INTEGER NOT NULL DEFAULT 0,
+                stub_left_at_source       INTEGER NOT NULL DEFAULT 0,
+                vendor_name               TEXT,
+                original_filename         TEXT NOT NULL,
+                cleaned_filename          TEXT NOT NULL,
+                file_ext                  TEXT,
+                file_size_bytes           INTEGER,
+                date_added                TEXT NOT NULL,
+                date_modified_on_disk     TEXT,
+                classification_method     TEXT NOT NULL DEFAULT 'filename_heuristic'
+                                           CHECK (classification_method IN ('filename_heuristic', 'waveform_analysis', 'manual')),
+                classification_confidence REAL,
+                bpm                       REAL,
+                bpm_source                TEXT CHECK (bpm_source IN ('embedded_acid', 'embedded_id3', 'embedded_beatgrid', 'filename_regex', 'manual')),
+                musical_key               TEXT,
+                key_source                TEXT CHECK (key_source IN ('embedded_acid', 'embedded_id3', 'embedded_beatgrid', 'filename_regex', 'manual')),
+                acid_chunk_present         INTEGER NOT NULL DEFAULT 0,
+                acid_chunk_written_by_tool INTEGER NOT NULL DEFAULT 0,
+                duration_seconds          REAL,
+                sample_rate                INTEGER,
+                channels                   INTEGER,
+                scan_run_id                INTEGER REFERENCES scan_runs(id),
+                last_seen_at                TEXT NOT NULL,
+                status                       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'missing', 'error')),
+                rating                       INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN -2 AND 2)
+            );
+            INSERT INTO samples_new SELECT * FROM samples;
+            DROP TABLE samples;
+            ALTER TABLE samples_new RENAME TO samples;
+            CREATE INDEX IF NOT EXISTS idx_samples_bucket ON samples(bucket);
+            CREATE INDEX IF NOT EXISTS idx_samples_status ON samples(status);
+            CREATE INDEX IF NOT EXISTS idx_samples_rating ON samples(rating);
+            CREATE INDEX IF NOT EXISTS idx_samples_browse_rating ON samples(status, rating, date_added);
+            """
+        )
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = ON")
+        fk_errors = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if fk_errors:
+            raise RuntimeError(f"samples migration left dangling foreign keys: {fk_errors}")
+
+    # scan_runs.run_type's CHECK constraint gained 'rename_remediation',
+    # 'tempo_remediation', 'retag_remediation', and 'bpm_remediation' after
+    # some DBs already existed. SQLite can't ALTER a CHECK constraint in place,
+    # so rebuild the table when an older constraint is detected -- checking for
+    # the newest value covers every earlier constraint version too.
+    scan_runs_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'scan_runs'"
+    ).fetchone()
+    if scan_runs_sql is not None and "bpm_remediation" not in scan_runs_sql["sql"]:
+        # Dropping scan_runs outright while samples.scan_run_id references it
+        # violates the FK constraint even mid-migration (verified empirically),
+        # so foreign key enforcement has to be off for this rebuild -- must
+        # happen outside any transaction, hence the commit() just above.
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.executescript(
+            """
+            CREATE TABLE scan_runs_new (
+                id              INTEGER PRIMARY KEY,
+                run_type        TEXT NOT NULL CHECK (run_type IN ('initial_sweep', 'inbox_rescan', 'vendor_rescan', 'rename_remediation', 'tempo_remediation', 'retag_remediation', 'bpm_remediation')),
+                started_at      TEXT NOT NULL,
+                finished_at     TEXT,
+                dry_run         INTEGER NOT NULL,
+                files_scanned   INTEGER NOT NULL DEFAULT 0,
+                files_moved     INTEGER NOT NULL DEFAULT 0,
+                files_symlinked INTEGER NOT NULL DEFAULT 0,
+                errors_count    INTEGER NOT NULL DEFAULT 0,
+                manifest_path   TEXT
+            );
+            INSERT INTO scan_runs_new SELECT * FROM scan_runs;
+            DROP TABLE scan_runs;
+            ALTER TABLE scan_runs_new RENAME TO scan_runs;
+            """
+        )
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = ON")
+        fk_errors = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if fk_errors:
+            raise RuntimeError(f"scan_runs migration left dangling foreign keys: {fk_errors}")
     conn.commit()
 
 
@@ -93,6 +212,20 @@ def start_scan_run(conn: sqlite3.Connection, run_type: str, *, dry_run: bool) ->
     )
     conn.commit()
     return cur.lastrowid
+
+
+def last_scan_run_started_at(conn: sqlite3.Connection, run_type: str) -> str | None:
+    """Most recent completed (non-dry-run) started_at for a run_type, or None
+    if there isn't one yet -- inbox_rescan's incremental cutoff, so the first
+    ever run still sees everything and every run after that only reconsiders
+    what changed since the previous one.
+    """
+    row = conn.execute(
+        "SELECT started_at FROM scan_runs WHERE run_type = ? AND dry_run = 0 AND finished_at IS NOT NULL "
+        "ORDER BY started_at DESC LIMIT 1",
+        (run_type,),
+    ).fetchone()
+    return row[0] if row else None
 
 
 def finish_scan_run(
@@ -186,6 +319,25 @@ def upsert_sample(conn: sqlite3.Connection, record: SampleRecord, scan_run_id: i
 
     _replace_tags(conn, sample_id, record.tags)
     return sample_id
+
+
+def set_rating(conn: sqlite3.Connection, sample_id: int, rating: int) -> None:
+    """Set a sample's user rating (-2..+2). Mirrors Database.setRating on the
+    Swift side, which is what the Stage 2 app actually calls day to day --
+    this exists for CLI debugging/scripting parity.
+    """
+    if not -2 <= rating <= 2:
+        raise ValueError(f"rating must be between -2 and 2, got {rating}")
+    conn.execute("UPDATE samples SET rating = ? WHERE id = ?", (rating, sample_id))
+    conn.commit()
+
+
+def replace_tags_for_sample(conn: sqlite3.Connection, sample_id: int, tags: tuple[str, ...]) -> None:
+    """Public entry point for remediation tools (retag_remediation.py, and
+    undo.py restoring a retag) that need to overwrite a sample's tag set
+    directly, without going through upsert_sample's full sample-row upsert.
+    """
+    _replace_tags(conn, sample_id, tags)
 
 
 def _replace_tags(conn: sqlite3.Connection, sample_id: int, tags: tuple[str, ...]) -> None:

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from sample_librarian.classify.classifier import classify, load_taxonomy
+from sample_librarian.classify.classifier import classify, load_taxonomy, slugify_vendor_name
 
 TAXONOMY_PATH = Path(__file__).parent.parent / "config" / "taxonomy.yaml"
 
@@ -89,9 +89,20 @@ def test_loop_type_short_duration_is_one_shot(rules):
     assert "one-shot" in result.tags
 
 
-def test_loop_type_medium_duration_is_loop(rules):
-    result = classify("Random_Phrase.wav", [], rules, duration_seconds=8.0)
+def test_loop_type_medium_duration_with_real_bpm_is_loop(rules):
+    # A real tempo is what promotes a longer-than-a-hit sample to "loop".
+    result = classify("Random_Phrase.wav", [], rules, duration_seconds=8.0, bpm=120.0)
     assert "loop" in result.tags
+
+
+def test_loop_type_medium_duration_without_bpm_is_not_a_loop(rules):
+    # Deliberate: length alone no longer implies "loop" -- a long tonal sample
+    # with no beat grid (a held pad, a sampled riff, a vocal phrase) is left
+    # untagged rather than wrongly called a loop. This was the single biggest
+    # source of bad "loop" tags in the real library (~7k sampler notes).
+    result = classify("Random_Phrase.wav", [], rules, duration_seconds=8.0)
+    assert "loop" not in result.tags
+    assert "one-shot" not in result.tags
 
 
 def test_loop_type_falls_back_to_matched_tags_when_duration_unknown(rules):
@@ -115,10 +126,43 @@ def test_loop_type_drum_one_shot_with_long_sub_tail_still_one_shot(rules):
     assert "loop" not in result.tags
 
 
-def test_loop_type_non_drum_type_keeps_short_threshold(rules):
-    # The generous threshold is specifically for drum-type one-shots; a
-    # pad/synth/etc. at 5.9s with no other signal should still read as a loop.
+def test_loop_type_non_drum_tonal_no_bpm_is_not_labeled(rules):
+    # A pad/texture at 5.9s with no tempo: ambiguous between a held note and a
+    # loop, so neither tag is applied.
     result = classify("Ambient_Texture.wav", [], rules, duration_seconds=5.887)
+    assert "loop" not in result.tags
+    assert "one-shot" not in result.tags
+
+
+def test_loop_type_808_long_no_bpm_is_one_shot(rules):
+    # Regression: "Beatz vampire 808 3.wav" is 17.9s with no tempo -- a long
+    # sub hit, not a loop. 808/bass/sub/pad lean one-shot now.
+    result = classify("Beatz vampire 808 3.wav", ["808", "Drum Kit"], rules, duration_seconds=17.9)
+    assert "one-shot" in result.tags
+    assert "loop" not in result.tags
+
+
+def test_loop_type_instrument_multisample_tree_is_one_shot(rules):
+    # Regression: "Velvetine Synth Pad.aif" (16s) lives in Logic's
+    # sampler-instrument source tree -- a single mapped note, never a loop.
+    result = classify(
+        "Velvetine Synth Pad.aif",
+        ["Pad", "Synthesizer", "Samples", "Logic Pro Library.bundle"],
+        rules,
+        duration_seconds=16.0,
+    )
+    assert "one-shot" in result.tags
+    assert "loop" not in result.tags
+
+
+def test_loop_type_instrument_multisample_loop_keyword_still_wins(rules):
+    # An explicit "loop" in the name beats the multisample-tree heuristic.
+    result = classify(
+        "African Shaker loop.wav",
+        ["Samples", "Instrument", "Patches"],
+        rules,
+        duration_seconds=4.0,
+    )
     assert "loop" in result.tags
 
 
@@ -177,3 +221,44 @@ def test_tags_are_deduplicated(rules):
     # triggered the same tag twice via different routes -- must not duplicate.
     result = classify("Kick_Kick_Layered.wav", [], rules)
     assert result.tags.count("kick") == 1
+
+
+def test_camelcase_concatenated_keyword_still_matches(rules):
+    # "DrumNBass" has no underscore/dash/space separator at all -- only the
+    # camelCase word boundaries hint that it's really "Drum N Bass", which is
+    # one of dnb's existing keyword phrases.
+    result = classify("DrumNBass_140.wav", [], rules)
+    assert "dnb" in result.tags
+
+
+def test_camelcase_split_does_not_false_positive_on_plain_acronyms(rules):
+    # A run of capitals with no lowercase after it (an acronym like "SFX")
+    # must not get split into single-letter words.
+    result = classify("SFX_Riser_01.wav", [], rules)
+    assert "fx" in result.tags
+    assert "riser" in result.tags
+
+
+def test_dnb_ampersand_variant(rules):
+    result = classify("Drum & Bass Loop.wav", [], rules)
+    assert "dnb" in result.tags
+
+
+def test_new_genre_rules_present(rules):
+    assert "rnb" in classify("Smooth R&B Keys.wav", [], rules).tags
+    assert "edm" in classify("Big Room EDM Drop.wav", [], rules).tags
+    assert "drill" in classify("UK Drill 140.wav", [], rules).tags
+    assert "amapiano" in classify("Amapiano Log Drum.wav", [], rules).tags
+
+
+def test_creator_source_rules_present(rules):
+    assert "cymatics" in classify("Cymatics Trap Vol 3.wav", [], rules).tags
+    assert "loopmasters" in classify("Loopmasters Deep House Pack.wav", [], rules).tags
+    assert "splice" in classify("Splice Sounds Kick.wav", [], rules).tags
+
+
+def test_slugify_vendor_name():
+    assert slugify_vendor_name("Splice") == "splice"
+    assert slugify_vendor_name("Native Instruments") == "native-instruments"
+    assert slugify_vendor_name("Logic Pro Library.bundle") == "logic-pro-library"
+    assert slugify_vendor_name("Some App.app") == "some-app"

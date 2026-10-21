@@ -8,7 +8,7 @@ from pathlib import Path
 
 ICLOUD_MARKER = "Mobile Documents"
 
-DEFAULT_AUDIO_EXTENSIONS = (".wav", ".aif", ".aiff", ".mp3", ".m4a", ".flac")
+DEFAULT_AUDIO_EXTENSIONS = (".wav", ".aif", ".aiff", ".aifc", ".caf", ".mp3", ".m4a", ".flac")
 
 
 class ConfigError(Exception):
@@ -32,6 +32,16 @@ class Settings:
     scan_roots: tuple[Path, ...]
     vendor_roots: tuple[Path, ...]
     audio_extensions: tuple[str, ...]
+    # Subtrees never walked at all, even though they sit inside a scan_root --
+    # for a folder that holds real files with no sample content (e.g. Apple
+    # Music's own library living right next to real samples under ~/Music).
+    # Different from vendor_roots: a vendor_roots match still gets touched
+    # (symlinked); an excluded_paths match is never visited.
+    excluded_paths: tuple[Path, ...] = ()
+    # Overrides the default library_root/inbox location -- e.g. pointing it
+    # at ~/Downloads so rescan-inbox can treat an existing dumping-ground
+    # folder as the inbox instead of a dedicated one inside library_root.
+    inbox_dir_override: Path | None = None
 
     @property
     def vendor_dir(self) -> Path:
@@ -39,6 +49,8 @@ class Settings:
 
     @property
     def inbox_dir(self) -> Path:
+        if self.inbox_dir_override is not None:
+            return self.inbox_dir_override
         return self.library_root / "inbox"
 
     @property
@@ -79,13 +91,17 @@ def load_settings(config_path: Path) -> Settings:
 
     scan_roots = tuple(_expand(p) for p in raw.get("scan_roots", []))
     vendor_roots = tuple(_expand(p) for p in raw.get("vendor_roots", []))
+    excluded_paths = tuple(_expand(p) for p in raw.get("excluded_paths", []))
     audio_extensions = tuple(
         ext.lower() for ext in raw.get("audio_extensions", DEFAULT_AUDIO_EXTENSIONS)
     )
+    inbox_dir_override = _expand(raw["inbox_dir"]) if "inbox_dir" in raw else None
 
     return Settings(
         library_root=library_root,
         scan_roots=scan_roots,
         vendor_roots=vendor_roots,
         audio_extensions=audio_extensions,
+        excluded_paths=excluded_paths,
+        inbox_dir_override=inbox_dir_override,
     )

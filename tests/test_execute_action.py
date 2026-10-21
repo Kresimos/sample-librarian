@@ -32,7 +32,7 @@ def test_move_success_with_tempo_write_failure_is_not_reported_as_failed_move(tm
 
     manifest_path = tmp_path / "manifest.jsonl"
     with patch(
-        "sample_librarian.pipeline.per_file_pipeline._write_tempo_metadata",
+        "sample_librarian.pipeline.per_file_pipeline.write_tempo_metadata",
         side_effect=RuntimeError("simulated tempo write failure"),
     ):
         with ManifestWriter(manifest_path) as manifest:

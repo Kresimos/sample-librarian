@@ -44,6 +44,7 @@ class FmtInfo:
     channels: int
     sample_rate: int
     bits_per_sample: int
+    audio_format: int  # 1 = PCM integer, 3 = IEEE float -- matters at 32-bit depth, both are common
 
 
 @dataclass(frozen=True)
@@ -95,10 +96,10 @@ def read_fmt(chunks: list[RiffChunk]) -> FmtInfo | None:
     fmt = get_chunk(chunks, "fmt ")
     if fmt is None or len(fmt.data) < 16:
         return None
-    _audio_format, channels, sample_rate, _byte_rate, _block_align, bits_per_sample = (
+    audio_format, channels, sample_rate, _byte_rate, _block_align, bits_per_sample = (
         struct.unpack_from("<HHIIHH", fmt.data, 0)
     )
-    return FmtInfo(channels=channels, sample_rate=sample_rate, bits_per_sample=bits_per_sample)
+    return FmtInfo(channels=channels, sample_rate=sample_rate, bits_per_sample=bits_per_sample, audio_format=audio_format)
 
 
 def read_duration_seconds(chunks: list[RiffChunk]) -> float | None:
@@ -180,21 +181,33 @@ def _encode_acid(acid: AcidData) -> bytes:
     )
 
 
+def write_chunk(path: Path, chunk_id: str, data: bytes) -> None:
+    """Write (adding or replacing) an arbitrary chunk by id, preserving every
+    other chunk. Generic version of what write_acid used to do inline --
+    also used by audio/smart_tempo.py for the 'ResU' chunk, which doesn't
+    need its own structured read/parse helpers the way ACID does.
+    """
+    chunks = read_chunks(path)
+    existing = get_chunk(chunks, chunk_id)
+    if existing is not None:
+        chunks = [replace(c, data=data, size=len(data)) if c.chunk_id == chunk_id else c for c in chunks]
+    else:
+        chunks = [*chunks, RiffChunk(chunk_id, offset=-1, size=len(data), data=data)]
+    _write_wav(path, chunks)
+
+
+def remove_chunk(path: Path, chunk_id: str) -> None:
+    """Strip a chunk entirely by id. No-op if it isn't present."""
+    chunks = read_chunks(path)
+    if get_chunk(chunks, chunk_id) is None:
+        return
+    remaining = [c for c in chunks if c.chunk_id != chunk_id]
+    _write_wav(path, remaining)
+
+
 def write_acid(path: Path, acid: AcidData) -> None:
     """Write (adding or replacing) the 'acid' chunk, preserving every other chunk."""
-    chunks = read_chunks(path)
-    new_chunk_data = _encode_acid(acid)
-
-    existing = get_chunk(chunks, "acid")
-    if existing is not None:
-        chunks = [
-            replace(c, data=new_chunk_data, size=len(new_chunk_data)) if c.chunk_id == "acid" else c
-            for c in chunks
-        ]
-    else:
-        chunks = [*chunks, RiffChunk("acid", offset=-1, size=len(new_chunk_data), data=new_chunk_data)]
-
-    _write_wav(path, chunks)
+    write_chunk(path, "acid", _encode_acid(acid))
 
 
 def merge_tempo(path: Path, tempo: float) -> None:
@@ -209,11 +222,7 @@ def remove_acid(path: Path) -> None:
     """Strip the 'acid' chunk entirely, e.g. to undo a merge_tempo that created
     one where none existed before. No-op if there's no acid chunk.
     """
-    chunks = read_chunks(path)
-    if get_chunk(chunks, "acid") is None:
-        return
-    remaining = [c for c in chunks if c.chunk_id != "acid"]
-    _write_wav(path, remaining)
+    remove_chunk(path, "acid")
 
 
 def _write_wav(path: Path, chunks: list[RiffChunk]) -> None:

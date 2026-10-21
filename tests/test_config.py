@@ -36,6 +36,32 @@ audio_extensions = [".wav", ".mp3"]
     assert settings.unsorted_dir == library_root / "unsorted"
 
 
+def test_load_settings_defaults_inbox_dir_under_library_root(tmp_path: Path):
+    library_root = tmp_path / "Library"
+    config_file = tmp_path / "settings.toml"
+    config_file.write_text(f'library_root = "{library_root}"\n')
+
+    settings = load_settings(config_file)
+
+    assert settings.inbox_dir == library_root / "inbox"
+
+
+def test_load_settings_honors_inbox_dir_override(tmp_path: Path):
+    library_root = tmp_path / "Library"
+    downloads = tmp_path / "Downloads"
+    config_file = tmp_path / "settings.toml"
+    config_file.write_text(
+        f"""
+library_root = "{library_root}"
+inbox_dir = "{downloads}"
+"""
+    )
+
+    settings = load_settings(config_file)
+
+    assert settings.inbox_dir == downloads
+
+
 def test_load_settings_rejects_icloud_library_root(tmp_path: Path):
     icloud_style = tmp_path / "Library" / "Mobile Documents" / "SampleLibrary"
     config_file = tmp_path / "settings.toml"

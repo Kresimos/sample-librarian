@@ -1,8 +1,11 @@
+import struct
 from pathlib import Path
 
 import pytest
 
-from sample_librarian.audio import metadata_extractor
+from sample_librarian.audio import metadata_extractor, riff_chunks
+
+from .test_aiff_caf_chunks import build_aiff, build_caf
 
 # A minimal but real AIFF header (FORM/AIFF), enough for ffprobe and our
 # sniffer to recognize -- doesn't need real audio data for this test.
@@ -52,3 +55,80 @@ def test_unsupported_extension_with_no_recognizable_content_raises(tmp_path: Pat
     unknown.write_bytes(b"nothing recognizable here")
     with pytest.raises(metadata_extractor.UnsupportedFormatError):
         metadata_extractor.extract(unknown)
+
+
+def _wav_with_acid_beats(path: Path, *, num_beats: int, tempo: float, num_frames: int) -> Path:
+    from .helpers import build_minimal_wav
+
+    path.write_bytes(build_minimal_wav(num_frames=num_frames, sample_rate=44100, channels=1))
+    riff_chunks.write_acid(
+        path,
+        riff_chunks.AcidData(
+            is_one_shot=True, root_note_set=False, root_note_midi=0,
+            num_beats=num_beats, meter_numerator=4, meter_denominator=4, tempo=tempo,
+        ),
+    )
+    return path
+
+
+def test_wav_acid_beatgrid_fills_tempo_when_tempo_field_is_zero(tmp_path: Path):
+    # The "Sample 02 (Paul Fathy - Funky Baby Love)" case: ACID chunk present,
+    # 29 beats, tempo field left at 0, ~14.5s long.
+    p = _wav_with_acid_beats(
+        tmp_path / "Sample 02 (Paul Fathy - Funky Baby Love).wav",
+        num_beats=29, tempo=0.0, num_frames=int(44100 * 14.542),
+    )
+    meta = metadata_extractor.extract(p)
+    assert meta.bpm == 120.0
+    assert meta.bpm_source == "embedded_beatgrid"
+
+
+def test_wav_acid_real_tempo_still_wins_over_beatgrid(tmp_path: Path):
+    p = _wav_with_acid_beats(
+        tmp_path / "loop.wav", num_beats=29, tempo=124.0, num_frames=int(44100 * 14.0)
+    )
+    meta = metadata_extractor.extract(p)
+    assert meta.bpm == 124.0
+    assert meta.bpm_source == "embedded_acid"
+
+
+def test_wav_acid_beatgrid_skipped_for_percussion_one_shot_name(tmp_path: Path):
+    # "Danny Brown - The Cave 808.wav": 8 beats, 3.4s -- an 808 hit, not a loop.
+    p = _wav_with_acid_beats(
+        tmp_path / "Danny Brown - The Cave 808.wav",
+        num_beats=8, tempo=0.0, num_frames=int(44100 * 3.4),
+    )
+    meta = metadata_extractor.extract(p)
+    assert meta.bpm is None
+
+
+def test_wav_acid_beatgrid_skipped_for_low_beat_count(tmp_path: Path):
+    p = _wav_with_acid_beats(
+        tmp_path / "Snare Roll.wav", num_beats=4, tempo=0.0, num_frames=int(44100 * 2.0)
+    )
+    meta = metadata_extractor.extract(p)
+    assert meta.bpm is None
+
+
+def test_caf_extract_end_to_end(tmp_path: Path):
+    p = tmp_path / "Bumping Disco Guitar.caf"
+    p.write_bytes(build_caf(
+        valid_frames=176400,
+        descriptor={"beat count": 8, "key signature": "E", "key type": "minor"},
+    ))
+    meta = metadata_extractor.extract(p)
+    assert meta.bpm == 120.0
+    assert meta.bpm_source == "embedded_beatgrid"
+    assert meta.musical_key == "Emin"
+    assert meta.key_source == "embedded_beatgrid"
+
+
+def test_aiff_extract_reads_tempo_marker(tmp_path: Path):
+    p = tmp_path / "Breaks Dub Plate Beat 01.aif"
+    p.write_bytes(build_aiff(
+        num_frames=int(44100 * 5.5),
+        mark_text=b"\x00\x01\x00\x01\x00\x00\x00\x00\x0cTempo: 174.0\x00",
+    ))
+    meta = metadata_extractor.extract(p)
+    assert meta.bpm == 174.0
+    assert meta.bpm_source == "embedded_beatgrid"

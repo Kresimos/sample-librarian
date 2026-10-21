@@ -7,6 +7,7 @@ dependencies = [
     "click>=8.1",
     "mutagen>=1.47",
     "pyyaml>=6.0",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]

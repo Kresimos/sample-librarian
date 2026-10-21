@@ -15,16 +15,17 @@ from typing import Iterator
 
 @dataclass(frozen=True)
 class ManifestEntry:
-    action: str  # 'move' | 'symlink' | 'write_tempo_metadata'
+    action: str  # 'move' | 'symlink' | 'write_tempo_metadata' | 'rename' | 'retag' | 'db_metadata_update'
     source: str
     dest: str
     sample_source_path: str  # original discovered path, for undo bookkeeping even after a move
     timestamp: str
     success: bool
     error: str | None = None
-    # write_tempo_metadata only: what was there before, so undo can restore it
+    # write_tempo_metadata: what was there before, so undo can restore it
     # exactly rather than just deleting whatever tempo value happens to be
     # there now. {"chunk_existed_before": bool, "previous_tempo": float|None}.
+    # retag: {"tags_before": list[str]}, so undo can restore the old tag set.
     previous_state: dict | None = None
 
 

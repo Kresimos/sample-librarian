@@ -40,10 +40,36 @@ def test_decodes_url_percent_encoding():
     assert result == "Track Name Soundloadmate.com"
 
 
+def test_mangled_windows_backslash_path_keeps_only_last_segment():
+    result = clean_filename(
+        r"Cymatics - House - Starter Pack\Synth Loop Collection\Supersaw Loops\Cymatics - Super Saw Loop 15 - 128 BPM D#min"
+    )
+    assert "\\" not in result
+    assert result == "Cymatics Super Saw Loop 15"
+
+
+def test_escaped_quote_backslash_is_not_treated_as_path_separator():
+    # e.g. a URL-decoded '\"God Save The Queen\"' -- backslash here escapes a
+    # quote, it isn't a mangled Windows path, so nothing should be discarded.
+    result = clean_filename(r'British National Anthem \"God Save The Queen\" EN')
+    assert "British" in result and "Anthem" in result and "Queen" in result
+
+
 def test_make_unique_no_collision():
     assert make_unique("Kick Heavy", set()) == "Kick Heavy"
 
 
 def test_make_unique_appends_suffix_on_collision():
-    existing = {"Kick Heavy", "Kick Heavy 2"}
+    # existing_stems_lower must be lowercased -- see make_unique's docstring.
+    existing = {"kick heavy", "kick heavy 2"}
     assert make_unique("Kick Heavy", existing) == "Kick Heavy 3"
+
+
+def test_make_unique_is_case_insensitive():
+    # Regression: macOS's default filesystem is case-insensitive, so two
+    # differently-cased cleaned names (e.g. from clean_filename preserving
+    # an all-caps acronym-looking stem like "TOM1" vs title-casing "Tom1")
+    # must still be detected as colliding, not treated as distinct.
+    existing = {"tom1"}
+    assert make_unique("TOM1", existing) == "TOM1 2"
+    assert make_unique("Tom1", existing) == "Tom1 2"

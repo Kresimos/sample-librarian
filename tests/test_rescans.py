@@ -1,3 +1,5 @@
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sample_librarian.classify.classifier import load_taxonomy
@@ -12,12 +14,13 @@ from .helpers import write_minimal_wav
 TAXONOMY_PATH = Path(__file__).parent.parent / "config" / "taxonomy.yaml"
 
 
-def _make_settings(tmp_path: Path, *, vendor_roots=()) -> Settings:
+def _make_settings(tmp_path: Path, *, vendor_roots=(), inbox_dir_override=None) -> Settings:
     return Settings(
         library_root=tmp_path / "library",
         scan_roots=(tmp_path / "scan",),
         vendor_roots=tuple(vendor_roots),
         audio_extensions=(".wav",),
+        inbox_dir_override=inbox_dir_override,
     )
 
 
@@ -73,6 +76,70 @@ def test_inbox_rescan_respects_existing_unsorted_contents_for_collisions(tmp_pat
     assert report.errors == []
     names = {p.name for p in settings.unsorted_dir.iterdir()}
     assert names == {"Kick Heavy.wav", "Kick Heavy 2.wav"}
+
+
+def test_inbox_dir_can_be_repurposed_to_an_existing_folder(tmp_path: Path):
+    """inbox_dir doesn't have to be a dedicated empty folder under
+    library_root -- e.g. pointing it at ~/Downloads via settings.toml's
+    inbox_dir override.
+    """
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    settings = _make_settings(tmp_path, inbox_dir_override=downloads)
+    assert settings.inbox_dir == downloads
+    write_minimal_wav(downloads / "New_Find_128bpm.wav")
+    taxonomy_rules = load_taxonomy(TAXONOMY_PATH)
+
+    with repository.open_db(settings.db_path) as conn:
+        report = run_inbox_rescan(settings, taxonomy_rules, conn)
+
+    assert report.errors == []
+    assert report.orphan_count == 1
+    assert list(downloads.iterdir()) == []  # only the sample was in there, now gone
+    assert (settings.unsorted_dir / "New Find.wav").exists()
+
+
+def test_inbox_rescan_incremental_skips_files_unmodified_since_last_run(tmp_path: Path):
+    """A mixed-content dumping-ground inbox (e.g. repurposed ~/Downloads)
+    shouldn't have every file reconsidered on every run -- only ones modified
+    since the last completed inbox_rescan.
+    """
+    settings = _make_settings(tmp_path)
+    settings.inbox_dir.mkdir(parents=True)
+    write_minimal_wav(settings.inbox_dir / "First.wav")
+    taxonomy_rules = load_taxonomy(TAXONOMY_PATH)
+
+    with repository.open_db(settings.db_path) as conn:
+        first = run_inbox_rescan(settings, taxonomy_rules, conn)
+        assert first.orphan_count == 1
+
+        # Pin the recorded run start so the next cutoff is deterministic,
+        # independent of real wall-clock timing between the two runs.
+        conn.execute(
+            "UPDATE scan_runs SET started_at = ? WHERE id = ?",
+            ("2020-01-01T00:00:00+00:00", first.scan_run_id),
+        )
+        conn.commit()
+
+    # A file whose mtime predates the pinned cutoff -- e.g. something that
+    # was already sitting in Downloads before it became the inbox. Must be
+    # left alone, not silently swept up.
+    stale = write_minimal_wav(settings.inbox_dir / "Stale.wav")
+    old_time = datetime(2019, 1, 1, tzinfo=timezone.utc).timestamp()
+    os.utime(stale, (old_time, old_time))
+
+    # A file that genuinely arrived after the cutoff -- must still be picked up.
+    fresh = write_minimal_wav(settings.inbox_dir / "Fresh.wav")
+    new_time = datetime(2020, 6, 1, tzinfo=timezone.utc).timestamp()
+    os.utime(fresh, (new_time, new_time))
+
+    with repository.open_db(settings.db_path) as conn:
+        second = run_inbox_rescan(settings, taxonomy_rules, conn)
+
+    assert second.orphan_count == 1
+    assert stale.exists()  # untouched
+    assert not fresh.exists()  # moved into unsorted/
+    assert (settings.unsorted_dir / "Fresh.wav").exists()
 
 
 def test_vendor_rescan_only_symlinks_never_moves(tmp_path: Path):

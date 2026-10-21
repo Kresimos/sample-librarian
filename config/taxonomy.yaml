@@ -254,7 +254,10 @@ types:
     keywords: [trap]
 
   dnb:
-    keywords: [dnb, "drum and bass", "drum n bass", jungle]
+    # "DrumNBass"/"BassLine"-style concatenated names are handled separately
+    # by classifier.py's camelCase-splitting normalize (matches "drum n
+    # bass" once split), not by enumerating compact spellings here.
+    keywords: [dnb, "drum and bass", "drum n bass", "drum & bass", jungle]
 
   garage:
     keywords: [garage, "uk garage", ukg]
@@ -297,3 +300,116 @@ types:
 
   latin:
     keywords: [latin, reggaeton]
+
+  rnb:
+    keywords: ["r&b", "r n b", rnb, "rhythm and blues"]
+
+  edm:
+    keywords: [edm, "electronic dance", electro]
+
+  drill:
+    keywords: [drill, "uk drill"]
+
+  amapiano:
+    keywords: [amapiano]
+
+  afroswing:
+    keywords: [afroswing]
+
+  grime:
+    keywords: [grime]
+
+  dub:
+    keywords: [dub]
+
+  ska:
+    keywords: [ska]
+
+  jazz:
+    keywords: [jazz]
+
+  blues:
+    keywords: [blues]
+
+  folk:
+    keywords: [folk]
+
+  country:
+    keywords: [country]
+
+  classical:
+    keywords: [classical]
+
+  synthwave:
+    keywords: [synthwave, retrowave, outrun]
+
+  chiptune:
+    keywords: [chiptune, "8-bit", "8bit", "chip tune"]
+
+  world:
+    keywords: [world, "world music"]
+
+  gospel:
+    keywords: [gospel]
+
+  indie:
+    keywords: [indie]
+
+  downtempo:
+    keywords: [downtempo, chillout, "chill out", chill]
+
+  hyperpop:
+    keywords: [hyperpop, "hyper pop"]
+
+  # --- Creator / source -- who made/distributed this sample. For content
+  #     under a registered `vendor_roots` path (Logic, Native Instruments,
+  #     Splice, ...) the creator tag comes a different way -- mirrored from
+  #     the `vendor_name` DB column by per_file_pipeline.py, since that's an
+  #     authoritative signal, not something keyword-matching should guess at.
+  #     These rules are for everything else: a pack sitting loose in
+  #     ~/Downloads or ~/Desktop, never moved into a dedicated vendor folder,
+  #     whose filename/folder name still says who made it. "splice" below
+  #     overlaps harmlessly with the vendor_name-mirrored tag for real Splice
+  #     vendor content -- same tag string either way, no duplicate. Not
+  #     exhaustive -- add more as real folder names in the library reveal them.
+
+  splice:
+    keywords: [splice]
+
+  cymatics:
+    keywords: [cymatics]
+
+  loopmasters:
+    keywords: [loopmasters, "loop masters"]
+
+  samplemagic:
+    keywords: [samplemagic, "sample magic"]
+
+  blackoctopus:
+    keywords: ["black octopus", blackoctopus]
+
+  ghosthack:
+    keywords: [ghosthack, "ghost hack"]
+
+  functionloops:
+    keywords: ["function loops", functionloops]
+
+  waproduction:
+    keywords: ["w a production", "wa production", waproduction]
+
+  mainroom:
+    keywords: ["mainroom warehouse", mainroom]
+
+  # "me" -- personal recordings/bounces, as opposed to a third-party
+  # creator/vendor above. Deliberately narrow (folder name only, not a broad
+  # word like "bounce" alone -- that's a common musical-feel descriptor in
+  # vendor pack names too, e.g. "Trap Bounce Loop.wav", which must NOT match
+  # here). Added 2026-08-26 once ~/Music/Logic/Bounces was confirmed as
+  # exactly this signal -- see CLAUDE.md for the story. Not a generic
+  # "detect anything personal" rule; add more folder names here by hand as
+  # you find them, the same way creator/source rules above grow.
+  me:
+    keywords: [bounces]
+    # (a standalone "Ambient" genre folder/filename is already covered by
+    # the "ambience" rule above, whose keywords include "ambient" and which
+    # adds the "ambient" tag -- no separate genre rule needed for it.)

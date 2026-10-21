@@ -11,11 +11,12 @@ dry-run and apply can never accidentally diverge in what they decide.
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from pathlib import Path
 
-from sample_librarian.audio import compressed_tags, metadata_extractor, riff_chunks
-from sample_librarian.classify.classifier import TypeRule, classify
+from sample_librarian.audio import compressed_tags, metadata_extractor, riff_chunks, smart_tempo
+from sample_librarian.classify.classifier import TypeRule, classify, slugify_vendor_name
 from sample_librarian.config import Settings
 from sample_librarian.naming.cleaner import clean_filename, make_unique
 from sample_librarian.db.repository import now_iso
@@ -24,7 +25,7 @@ from sample_librarian.organize.mover import move_orphan_file
 from sample_librarian.organize.symlinker import symlink_vendor_file
 from sample_librarian.scanner.bucket_classifier import classify_bucket
 
-_NO_WRITE_BACK_EXTENSIONS = {".aif", ".aiff"}  # no AIFF chunk writer yet, see project plan
+_NO_WRITE_BACK_EXTENSIONS = {".aif", ".aiff", ".aifc", ".caf"}  # only WAV has a chunk writer
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,7 @@ def plan_file(
     settings: Settings,
     taxonomy_rules: list[TypeRule],
     *,
-    existing_unsorted_stems: set[str],
+    existing_unsorted_stems: set[str],  # must hold LOWERCASED stems -- see make_unique
 ) -> PlannedAction:
     decision = classify_bucket(path, settings.vendor_roots)
     metadata = metadata_extractor.extract(path)
@@ -71,7 +72,7 @@ def plan_file(
     else:
         cleaned_stem = clean_filename(path.stem)
         unique_stem = make_unique(cleaned_stem, existing_unsorted_stems)
-        existing_unsorted_stems.add(unique_stem)
+        existing_unsorted_stems.add(unique_stem.lower())
         cleaned_filename = f"{unique_stem}{path.suffix.lower()}"
         target_path = settings.unsorted_dir / cleaned_filename
 
@@ -82,13 +83,21 @@ def plan_file(
         and "song" not in classification.tags  # tempo-conform tagging is for loops, not full tracks
     )
 
+    # Mirror the vendor_name column into the tag system too -- vendor_name is
+    # already an authoritative, structured signal (from settings.toml's
+    # vendor_roots), not something classify()'s keyword matching could infer
+    # on its own, so it's appended here rather than added as a taxonomy rule.
+    tags = classification.tags
+    if decision.vendor_name is not None:
+        tags = (*tags, slugify_vendor_name(decision.vendor_name))
+
     return PlannedAction(
         source_path=path,
         bucket=decision.bucket,
         vendor_name=decision.vendor_name,
         target_path=target_path,
         cleaned_filename=cleaned_filename,
-        tags=classification.tags,
+        tags=tags,
         bpm=metadata.bpm,
         bpm_source=metadata.bpm_source,
         musical_key=metadata.musical_key,
@@ -182,8 +191,8 @@ def execute_action(
     tempo_error: str | None = None
     if action.would_write_tempo_metadata:
         try:
-            previous_state = _read_previous_tempo_state(action.target_path)
-            _write_tempo_metadata(action.target_path, action.bpm)
+            previous_state = read_previous_tempo_state(action.target_path)
+            write_tempo_metadata(action.target_path, action.bpm, action.duration_seconds)
             wrote_tempo = True
             manifest.record(
                 ManifestEntry(
@@ -213,23 +222,41 @@ def execute_action(
     return ExecutionOutcome(success=True, error=tempo_error, wrote_tempo_metadata=wrote_tempo)
 
 
-def _read_previous_tempo_state(target_path: Path) -> dict:
+def read_previous_tempo_state(target_path: Path) -> dict:
     ext = target_path.suffix.lower()
     if ext == ".wav":
         acid = riff_chunks.read_acid(riff_chunks.read_chunks(target_path))
-        if acid is None:
-            return {"chunk_existed_before": False, "previous_tempo": None}
-        return {"chunk_existed_before": True, "previous_tempo": acid.tempo}
+        smart_tempo_raw = smart_tempo.read_raw_chunk_data(target_path)
+        return {
+            "chunk_existed_before": acid is not None,
+            "previous_tempo": acid.tempo if acid is not None else None,
+            # Smart Tempo ('ResU') is tracked independently of ACID -- a
+            # vendor file could already carry one, the other, both, or
+            # neither, and undo must restore each correctly regardless of
+            # what the other one was doing.
+            "smart_tempo_existed_before": smart_tempo_raw is not None,
+            "smart_tempo_previous_raw_b64": (
+                base64.b64encode(smart_tempo_raw).decode("ascii") if smart_tempo_raw is not None else None
+            ),
+        }
     if ext in (".mp3", ".m4a", ".flac"):
         previous_bpm, _key = compressed_tags.read_tempo_key(target_path)
         return {"chunk_existed_before": previous_bpm is not None, "previous_tempo": previous_bpm}
     return {"chunk_existed_before": False, "previous_tempo": None}
 
 
-def _write_tempo_metadata(target_path: Path, bpm: float) -> None:
+def write_tempo_metadata(target_path: Path, bpm: float, duration_seconds: float | None = None) -> None:
     ext = target_path.suffix.lower()
     if ext == ".wav":
         riff_chunks.merge_tempo(target_path, bpm)
+        # Also write Logic Pro's own "Smart Tempo" chunk, confirmed
+        # empirically (2026-08-25) to be what actually drives Logic's "File
+        # Tempo" field on a plain drag -- Logic never reads the ACID chunk
+        # above for that. Needs duration, which should always be known for a
+        # WAV by this point; skip gracefully if not rather than write a
+        # nonsensical beat grid.
+        if duration_seconds is not None:
+            smart_tempo.write_smart_tempo(target_path, duration_seconds=duration_seconds, tempo=bpm)
     elif ext in (".mp3", ".m4a", ".flac"):
         compressed_tags.write_tempo(target_path, bpm)
     # AIFF has no writer yet -- would_write_tempo_metadata is already False for it
@@ -237,13 +264,22 @@ def _write_tempo_metadata(target_path: Path, bpm: float) -> None:
 
 def undo_tempo_metadata(target_path: Path, previous_state: dict) -> None:
     """Restore a file's tempo metadata to what it was before write_tempo_metadata
-    ran, using the previous_state captured in that manifest entry.
+    ran, using the previous_state captured in that manifest entry. WAV files
+    carry two independent pieces (ACID and Smart Tempo/'ResU') restored
+    separately, since either could have existed before while the other didn't.
     """
     ext = target_path.suffix.lower()
+
     if previous_state.get("chunk_existed_before"):
-        _write_tempo_metadata(target_path, previous_state["previous_tempo"])
-        return
-    if ext == ".wav":
+        write_tempo_metadata(target_path, previous_state["previous_tempo"])
+    elif ext == ".wav":
         riff_chunks.remove_acid(target_path)
     elif ext in (".mp3", ".m4a", ".flac"):
         compressed_tags.remove_tempo(target_path)
+
+    if ext == ".wav":
+        if previous_state.get("smart_tempo_existed_before"):
+            raw = base64.b64decode(previous_state["smart_tempo_previous_raw_b64"])
+            riff_chunks.write_chunk(target_path, "ResU", raw)
+        else:
+            smart_tempo.remove_smart_tempo(target_path)

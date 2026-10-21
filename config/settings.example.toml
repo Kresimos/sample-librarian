@@ -11,8 +11,19 @@ scan_roots = [
     "~/Desktop",
 ]
 
-# Audio extensions in scope for v1.
-audio_extensions = [".wav", ".aif", ".aiff", ".mp3", ".m4a", ".flac"]
+# Audio extensions in scope. .caf covers Apple Loops (tempo/key read from the
+# CAF descriptor chunk); .caf and .aif/.aifc are never written back to.
+audio_extensions = [".wav", ".aif", ".aiff", ".aifc", ".caf", ".mp3", ".m4a", ".flac"]
+
+# Optional. Where `rescan-inbox` looks -- defaults to library_root/inbox (an
+# empty folder you deliberately drop files into). Can instead point at an
+# existing dumping-ground folder, e.g. "~/Downloads" -- rescan-inbox real-moves
+# any audio file found there into unsorted/ with no stub left behind, and each
+# run only reconsiders files modified since the last completed inbox_rescan.
+# If you repurpose an existing folder like this, remove it from scan_roots
+# above too, so a full sweep and rescan-inbox aren't both processing it (full
+# sweep leaves a stub symlink behind; inbox_rescan doesn't -- picking one).
+# inbox_dir = "~/Downloads"
 
 # Any file whose path starts with one of these is bucket="vendor": left physically
 # untouched, only symlinked into the library. Never moved, never renamed, never
@@ -22,5 +33,6 @@ audio_extensions = [".wav", ".aif", ".aiff", ".mp3", ".m4a", ".flac"]
 vendor_roots = [
     # "~/Music/Splice",
     # "/Library/Application Support/Native Instruments",
+    # "/Library/Audio/Apple Loops",
     # "~/Music/Spitfire Audio",
 ]

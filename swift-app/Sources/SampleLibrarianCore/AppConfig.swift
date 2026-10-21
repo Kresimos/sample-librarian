@@ -35,6 +35,20 @@ public enum AppConfig {
         return libraryRoot.appendingPathComponent("settings.toml", isDirectory: false)
     }
 
+    /// Same convention as `settingsPath`, for the same reason -- and with an
+    /// extra wrinkle: the CLI's `--taxonomy` default is the *relative* path
+    /// `config/taxonomy.yaml`, resolved against the working directory. A
+    /// Finder-launched app's working directory is `/`, so leaving the flag off
+    /// makes click reject the run outright ("Path 'config/taxonomy.yaml' does
+    /// not exist"). This app always passes the flag explicitly.
+    /// Override with `SAMPLELIB_TAXONOMY_PATH`.
+    public static var taxonomyPath: URL {
+        if let override = ProcessInfo.processInfo.environment["SAMPLELIB_TAXONOMY_PATH"] {
+            return URL(fileURLWithPath: override, isDirectory: false)
+        }
+        return libraryRoot.appendingPathComponent("taxonomy.yaml", isDirectory: false)
+    }
+
     /// Override with `SAMPLELIB_CLI_PATH` if samplelib isn't at the default
     /// venv location (see CLAUDE.md's venv note).
     public static var cliExecutablePath: URL {

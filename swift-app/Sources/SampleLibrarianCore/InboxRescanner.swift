@@ -13,6 +13,7 @@ public enum InboxRescanner {
     public enum RescanError: Error, CustomStringConvertible {
         case cliNotFound(URL)
         case settingsNotFound(URL)
+        case taxonomyNotFound(URL)
 
         public var description: String {
             switch self {
@@ -21,13 +22,36 @@ public enum InboxRescanner {
             case .settingsNotFound(let url):
                 return "settings.toml not found at \(url.path). Copy or symlink your config there, " +
                     "or set SAMPLELIB_CONFIG_PATH."
+            case .taxonomyNotFound(let url):
+                return "taxonomy.yaml not found at \(url.path). Copy or symlink it there, " +
+                    "or set SAMPLELIB_TAXONOMY_PATH."
             }
         }
+    }
+
+
+    /// A GUI app launched from Finder inherits a bare `PATH`
+    /// (`/usr/bin:/bin:/usr/sbin:/sbin`), not the login shell's -- so a child
+    /// process can't find Homebrew binaries. The CLI shells out to `ffprobe`
+    /// (`audio/probe.py`) for duration/samplerate on MP3/M4A/FLAC and raises
+    /// `FfprobeNotFoundError` when `shutil.which` comes up empty, which would
+    /// fail every compressed file in the inbox with no obvious cause.
+    private static func cliEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let brewPaths = ["/opt/homebrew/bin", "/usr/local/bin"]
+        let existing = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        let current = Set(existing.split(separator: ":").map(String.init))
+        let missing = brewPaths.filter { !current.contains($0) }
+        if !missing.isEmpty {
+            env["PATH"] = (missing + [existing]).joined(separator: ":")
+        }
+        return env
     }
 
     public static func run() async throws -> Result {
         let cliPath = AppConfig.cliExecutablePath
         let settingsPath = AppConfig.settingsPath
+        let taxonomyPath = AppConfig.taxonomyPath
 
         guard FileManager.default.isExecutableFile(atPath: cliPath.path) else {
             throw RescanError.cliNotFound(cliPath)
@@ -35,11 +59,20 @@ public enum InboxRescanner {
         guard FileManager.default.fileExists(atPath: settingsPath.path) else {
             throw RescanError.settingsNotFound(settingsPath)
         }
+        guard FileManager.default.fileExists(atPath: taxonomyPath.path) else {
+            throw RescanError.taxonomyNotFound(taxonomyPath)
+        }
 
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             process.executableURL = cliPath
-            process.arguments = ["rescan-inbox", "--config", settingsPath.path]
+            process.arguments = [
+                "rescan-inbox",
+                "--config", settingsPath.path,
+                "--taxonomy", taxonomyPath.path,
+            ]
+            process.currentDirectoryURL = AppConfig.libraryRoot
+            process.environment = cliEnvironment()
 
             let pipe = Pipe()
             process.standardOutput = pipe

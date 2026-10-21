@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "SampleLibrarianApp",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],  // .onKeyPress (rating/playback key handling) needs macOS 14+
     targets: [
         // Pure logic: DB access, models, search query building. No SwiftUI/AppKit,
         // so it's fully unit-testable without a display/window server.

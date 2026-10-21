@@ -19,3 +19,6 @@ config/settings.toml
 swift-app/.build/
 swift-app/.swiftpm/
 swift-app/*.xcodeproj/xcuserdata/
+
+.pytest_cache/
+CLAUDE.md
